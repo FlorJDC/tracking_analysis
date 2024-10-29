@@ -12,6 +12,7 @@ import logging as _lgn
 import os as _os
 from concurrent.futures import ProcessPoolExecutor as _PPE
 import warnings as _warnings
+from PIL import Image
 
 
 _lgn.basicConfig()
@@ -52,9 +53,7 @@ def _gaussian2D(grid, amplitude, x0, y0, sigma, offset, ravel=True):
     return G
 
 
-def _gaussian_fit(
-    data: _np.ndarray, x_max: float, y_max: float, sigma: float
-) -> tuple[float, float, float]:
+def _gaussian_fit(data, x_max, y_max, sigma): # (data: _np.ndarray, x_max: float, y_max: float, sigma: float) -> tuple[float, float, float]:
     """Fit a gaussian to an image.
 
     All data is in PIXEL units.
@@ -120,6 +119,7 @@ class AjustaNPs(_th.Thread):
     def __init__(
         self,
         nmppx: float,
+        filepath: str,
         *args,
         **kwargs,
     ):
@@ -127,22 +127,12 @@ class AjustaNPs(_th.Thread):
 
         Parameters
         ----------
-        camera:
-            Camera. Must implement a method called `get_image`, that returns
-            a 2d numpy.ndarray representing the image
-        piezo:
-            Piezo controller. Must implement a method called `set_position` that
-            accepts x, y and z positions
-        camera_info: info_types.CameraInfo
-            Holds information about camera and (x,y) and z marks relation
-        corrector:
-            object that provides a response
-        callback: Callable
-            Callable to report measured shifts. Will receive a `PointInfo`
-            object as the only parameter
+        nmppx:
+            nm per pixel.
         """
         super().__init__(*args, **kwargs)
         self._nmpp_xy = nmppx
+        self.filepath = filepath
 
     def set_xy_rois(self, rois) -> bool:
         """Set ROIs for xy stabilization.
@@ -159,6 +149,7 @@ class AjustaNPs(_th.Thread):
         True if successful, False otherwise
         """
         self._xy_rois = rois
+        print(self._xy_rois)
         return True
 
     def start_loop(self) -> bool:
@@ -175,7 +166,7 @@ class AjustaNPs(_th.Thread):
         with _warnings.catch_warnings():
             _warnings.simplefilter("ignore")
             _ = tuple(self._executor.map(_gaussian_fit, *params))
-        self.start()
+        self.start() # execute run 
         return True
 
     def stop_loop(self):
@@ -235,26 +226,39 @@ class AjustaNPs(_th.Thread):
             image[roi[0, 0]: roi[0, 1], roi[1, 0]: roi[1, 1]]
             for roi in self._xy_rois
         ]
+        print("trimmeds: ", trimmeds[0].shape)
         pos_max = [
             _np.unravel_index(_np.argmax(data), data.shape) for data in trimmeds
         ]
+        print('pos_max:', pos_max)
         sigmas = [data.shape[0] / 3 for data in trimmeds]
         self._last_params = {
             "x": _np.array([p[0] for p in pos_max], dtype=float),
             "y": _np.array([p[1] for p in pos_max], dtype=float),
             "s": _np.array(sigmas, dtype=float),
         }
+        print('self._last_params:', self._last_params)
+        print('sigmas: ', sigmas)
 
-    def cargar_imagenes(self):
-        rv = _np.zeros((30, 1024, 1980), dtype=_np.uint8)
+    def cargar_imagenes(self, filepath:str):
+        with Image.open(filepath) as img:
+            frames = []
+            for i in range(img.n_frames):
+                img.seek(i)  # Mueve al siguiente frame
+                frames.append(_np.array(img))  # Agrega el frame como un array de NumPy
+                rv = _np.stack(frames, axis=0)  # Convierte la lista de frames en un array 3D
+        print(rv.shape)
+        # rv = _np.zeros((30, 1024, 1980), dtype=_np.uint8)
         for c, img in enumerate(rv):
-            img[512-4+c: 512+4+c, 990-4+c: 990+4+c] = 120
-            img[212-4+c: 212+4+c, 490-4-c: 490+4-c] = 20
+            #Marco los rois
+            img[420+c: 470+c, 218+c: 268+c] = 250
+            img[376+c: 406+c, 346+c: 366+c] = 100
+            # img[212-8+c: 212+8+c, 490-8-c: 490+8-c] = 200
         return rv
 
     def run(self):
         """Run loop."""
-        images = self.cargar_imagenes()  # array[n_imagenes, size_x, size_y]
+        images = self.cargar_imagenes(self.filepath)  # array[n_imagenes, size_x, size_y]
         self._initialize_last_params(images[0])
         self.results = []
         for img in images:
@@ -265,10 +269,15 @@ class AjustaNPs(_th.Thread):
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
-    lup = AjustaNPs(23.5)
+    filename = 'C:\\Users\\Cibion\\Pictures\\Data\\20241025\\output_video_50ms_exp_time.tiff'
+    lup = AjustaNPs(23.5, filename)
+    # rois = _np.array([
+    #     [[512-20, 512+40],[990-20, 990+40]],
+    #     [[212-20, 212+40],[490-20, 490+40]],
+    #     ])
     rois = _np.array([
-        [[512-20, 512+40],[990-20, 990+40]],
-        [[212-20, 212+40],[490-20, 490+40]],
+        [[420,470],[218,268]],
+        [[356,386],[346,376]]
         ])
     lup.set_xy_rois(rois)
     lup.start_loop()
