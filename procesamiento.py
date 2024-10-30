@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-Stabilizer
-
-XY and Z are managed independently.
+This script processes the videos taken from the stabilisation during tracking.
+TODO: add frontend to choose rois
 """
 
 import numpy as _np
@@ -13,12 +12,33 @@ import os as _os
 from concurrent.futures import ProcessPoolExecutor as _PPE
 import warnings as _warnings
 from PIL import Image
+import pandas as pd
 
 
 _lgn.basicConfig()
 _lgr = _lgn.getLogger(__name__)
 _lgr.setLevel(_lgn.DEBUG)
 
+def load_frame_times(csv_filepath):
+    """Carga los tiempos asociados a cada frame desde un archivo CSV.
+    
+    Parameters
+    ----------
+    csv_filepath : str
+        La ruta al archivo CSV que contiene el número de frame y el tiempo.
+        
+    Return
+    ------
+    times : list
+        Lista de tiempos asociados a cada frame.
+    """
+    df = pd.read_csv(csv_filepath, header=0) #None, names=["frame", "time"])
+    df["time"] = pd.to_datetime(df["time"], format='%H:%M:%S.%f')
+
+    # Calcular el tiempo transcurrido en milisegundos desde el primer frame
+    start_time = df["time"].iloc[0]
+    df["time_ms"] = (df["time"] - start_time).dt.total_seconds()# * 1000  #milisegundos
+    return df["time_ms"].values
 
 def _gaussian2D(grid, amplitude, x0, y0, sigma, offset, ravel=True):
     """Generate a 2D gaussian.
@@ -251,8 +271,8 @@ class AjustaNPs(_th.Thread):
         # rv = _np.zeros((30, 1024, 1980), dtype=_np.uint8)
         for c, img in enumerate(rv):
             #Marco los rois
-            img[420+c: 470+c, 218+c: 268+c] = 250
-            img[376+c: 406+c, 346+c: 366+c] = 100
+            img[860+c: 900+c, 990+c: 1020+c] = 250
+            #img[376+c: 406+c, 346+c: 366+c] = 100
             # img[212-8+c: 212+8+c, 490-8-c: 490+8-c] = 200
         return rv
 
@@ -266,27 +286,39 @@ class AjustaNPs(_th.Thread):
             self.results.append(xy_positions)
         _lgr.debug("Ending loop.")
 
-
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
-    filename = 'C:\\Users\\Cibion\\Pictures\\Data\\20241025\\output_video_50ms_exp_time.tiff'
+    filename = 'C:\\Users\\Cibion\\Pictures\\Data\\20241030\\output_video.tiff'
+    csv_filename = 'C:\\Users\\Cibion\\Pictures\\Data\\20241030\\frame_timestamps.csv' #Archivo con los tiempos en que se guarda cada frame
     lup = AjustaNPs(23.5, filename)
     # rois = _np.array([
     #     [[512-20, 512+40],[990-20, 990+40]],
     #     [[212-20, 212+40],[490-20, 490+40]],
     #     ])
     rois = _np.array([
-        [[420,470],[218,268]],
-        [[356,386],[346,376]]
+        [[860,900],[990,1020]]
         ])
     lup.set_xy_rois(rois)
     lup.start_loop()
     lup.stop_loop()
+    times = load_frame_times(csv_filename)
+    times_relative_ms = [(t - times[0]) for t in times]  # en ms
     n_rois = lup.results[0].shape[0]
-    plt.figure("taki")
-    for _ in range(n_rois):
-        x = [p[_, 0] for p in lup.results]
-        y = [p[_, 1] for p in lup.results]
-        plt.plot(x, marker='x', label=f" x roi ={_}")
-        plt.plot(y, marker="o", label=f" y roi ={_}")
+    # plt.figure("taki")
+    # for _ in range(n_rois):
+    #     x = [p[_, 0] for p in lup.results]
+    #     y = [p[_, 1] for p in lup.results]
+    #     plt.plot(x, marker='x', label=f" x roi ={_}")
+    #     plt.plot(y, marker="o", label=f" y roi ={_}")
+    # plt.legend()
+    
+    plt.figure("Coordenadas vs Tiempos")
+    for i in range(n_rois):
+        x = [p[i, 0] for p in lup.results]
+        y = [p[i, 1] for p in lup.results]
+        plt.plot(times_relative_ms, x, marker='x', label=f"x roi = {i}")
+        plt.plot(times_relative_ms, y, marker="o", label=f"y roi = {i}")    
+    plt.xlabel("Tiempo")
+    plt.ylabel("Coordenadas")
     plt.legend()
+    plt.show()
