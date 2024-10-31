@@ -3,9 +3,9 @@
 This script processes the videos taken from the stabilisation during tracking.
 TODO: add frontend to choose rois
 """
-
 import numpy as _np
 import scipy as _sp
+from scipy.optimize import curve_fit
 import threading as _th
 import logging as _lgn
 import os as _os
@@ -13,7 +13,7 @@ from concurrent.futures import ProcessPoolExecutor as _PPE
 import warnings as _warnings
 from PIL import Image
 import pandas as pd
-
+import matplotlib.pyplot as plt
 
 _lgn.basicConfig()
 _lgr = _lgn.getLogger(__name__)
@@ -35,9 +35,8 @@ def load_frame_times(csv_filepath):
     df = pd.read_csv(csv_filepath, header=0) #None, names=["frame", "time"])
     df["time"] = pd.to_datetime(df["time"], format='%H:%M:%S.%f')
 
-    # Calcular el tiempo transcurrido en milisegundos desde el primer frame
-    start_time = df["time"].iloc[0]
-    df["time_ms"] = (df["time"] - start_time).dt.total_seconds()# * 1000  #milisegundos
+    start_time = df["time"].iloc[0] # Calcula el tiempo transcurrido en ms desde el primer frame
+    df["time_ms"] = (df["time"] - start_time).dt.total_seconds()# * 1000  #ms
     return df["time_ms"].values
 
 def _gaussian2D(grid, amplitude, x0, y0, sigma, offset, ravel=True):
@@ -71,7 +70,6 @@ def _gaussian2D(grid, amplitude, x0, y0, sigma, offset, ravel=True):
     if ravel:
         G = G.ravel()
     return G
-
 
 def _gaussian_fit(data, x_max, y_max, sigma): # (data: _np.ndarray, x_max: float, y_max: float, sigma: float) -> tuple[float, float, float]:
     """Fit a gaussian to an image.
@@ -111,14 +109,13 @@ def _gaussian_fit(data, x_max, y_max, sigma): # (data: _np.ndarray, x_max: float
         v_min = data.min()
         v_max = data.max()
         args = (v_max - v_min, x_max, y_max, sigma, v_min)
-        popt, pcov = _sp.optimize.curve_fit(
+        popt, pcov = curve_fit(
             _gaussian2D, xdata, data.ravel(), p0=args
         )
     except Exception as e:
         _lgr.warning("Error fiting: %s, %s", e, type(e))
         return _np.nan, _np.nan, _np.nan
     return popt[1:4]
-
 
 class AjustaNPs(_th.Thread):
     """Trackea NPs
@@ -129,8 +126,6 @@ class AjustaNPs(_th.Thread):
     Functions that *do* belong to the public interface communicate with the
     running thread relying on the GIL (like setting a value) or in events.
     """
-
-    # Status flags
 
     # ROIS from the user
     _xy_rois: _np.ndarray = None  # [ [min, max]_x, [min, max]_y] * n_rois
@@ -153,6 +148,8 @@ class AjustaNPs(_th.Thread):
         super().__init__(*args, **kwargs)
         self._nmpp_xy = nmppx
         self.filepath = filepath
+        self._executor = None
+        self.i=0
 
     def set_xy_rois(self, rois) -> bool:
         """Set ROIs for xy stabilization.
@@ -169,14 +166,13 @@ class AjustaNPs(_th.Thread):
         True if successful, False otherwise
         """
         self._xy_rois = rois
-        print(self._xy_rois)
         return True
 
     def start_loop(self) -> bool:
         """Start."""
         self._executor = _PPE()
         # prime pool for responsiveness (a _must_ on windows).
-        nproc = _os.cpu_count()
+        nproc = _os.cpu_count() #cores available in CPU
         params = [
             [_np.eye(3)] * nproc,
             [1.0] * nproc,
@@ -186,7 +182,7 @@ class AjustaNPs(_th.Thread):
         with _warnings.catch_warnings():
             _warnings.simplefilter("ignore")
             _ = tuple(self._executor.map(_gaussian_fit, *params))
-        self.start() # execute run 
+        self.start() 
         return True
 
     def stop_loop(self):
@@ -197,7 +193,6 @@ class AjustaNPs(_th.Thread):
         self.join()
         self._executor.shutdown()
         _lgr.debug("Loop ended")
-
 
     def _locate_xy_centers(self, image: _np.ndarray) -> _np.ndarray:
         """Locate centers in XY ROIS.
@@ -217,21 +212,24 @@ class AjustaNPs(_th.Thread):
             image[roi[0, 0]: roi[0, 1], roi[1, 0]: roi[1, 1]]
             for roi in self._xy_rois
         ]
-        x = self._last_params["x"]
-        y = self._last_params["y"]
+        # x = self._last_params["x"]
+        # y = self._last_params["y"]
         s = self._last_params["s"]
+    
+        x, y = zip(*[_np.unravel_index(_np.argmax(im), im.shape) for im in trimmeds])
         locs = _np.array(
-            tuple(self._executor.map(_gaussian_fit, trimmeds, x, y, s))
-        )
-        self._last_params["x"] = locs[:, 0]
-        nanloc = _np.isnan(locs[:, 0])  # if x is nan, y also is nan
-        self._last_params["x"][nanloc] = x[nanloc]
-        self._last_params["y"] = locs[:, 1]
-        self._last_params["y"][nanloc] = y[nanloc]
-        self._last_params["s"] = locs[:, 2]
-        self._last_params["s"][nanloc] = s[nanloc]
-        rv = locs[:, :2] + self._xy_rois[:, 0, :]
-        rv *= self._nmpp_xy
+                tuple(self._executor.map(_gaussian_fit, trimmeds, x, y, s))
+                )        
+        # self._last_params["x"] = locs[:, 0]
+        # nanloc = _np.isnan(locs[:, 0])  # if x is nan, y also is nan
+        # self._last_params["x"][nanloc] = x[nanloc]
+        # self._last_params["y"] = locs[:, 1]
+        # self._last_params["y"][nanloc] = y[nanloc]
+        # self._last_params["s"] = locs[:, 2]
+        # self._last_params["s"][nanloc] = s[nanloc]
+        rv = locs[:, :2] + self._xy_rois[:, :, 0]
+        # rv *= self._nmpp_xy # convert to nm
+        self.i += 1
         return rv
 
     def _initialize_last_params(self, image):
@@ -246,34 +244,35 @@ class AjustaNPs(_th.Thread):
             image[roi[0, 0]: roi[0, 1], roi[1, 0]: roi[1, 1]]
             for roi in self._xy_rois
         ]
-        print("trimmeds: ", trimmeds[0].shape)
         pos_max = [
             _np.unravel_index(_np.argmax(data), data.shape) for data in trimmeds
         ]
-        print('pos_max:', pos_max)
+        # print('pos_max:', pos_max)
         sigmas = [data.shape[0] / 3 for data in trimmeds]
         self._last_params = {
             "x": _np.array([p[0] for p in pos_max], dtype=float),
             "y": _np.array([p[1] for p in pos_max], dtype=float),
             "s": _np.array(sigmas, dtype=float),
         }
-        print('self._last_params:', self._last_params)
-        print('sigmas: ', sigmas)
 
     def cargar_imagenes(self, filepath:str):
         with Image.open(filepath) as img:
             frames = []
             for i in range(img.n_frames):
-                img.seek(i)  # Mueve al siguiente frame
-                frames.append(_np.array(img))  # Agrega el frame como un array de NumPy
-                rv = _np.stack(frames, axis=0)  # Convierte la lista de frames en un array 3D
-        print(rv.shape)
+                img.seek(i)
+                frames.append(_np.array(img))
+            #     plt.imshow(_np.array(img), cmap='gray')
+            #     plt.title(f'Frame {i+1}')
+            #     #plt.axis('off')
+            #     plt.draw()
+            #     plt.pause(0.05)
+            # plt.show()
+            rv = _np.stack(frames, axis=0)
+        #Dejo esto para trabajar con imagen de fantasía
         # rv = _np.zeros((30, 1024, 1980), dtype=_np.uint8)
-        for c, img in enumerate(rv):
-            #Marco los rois
-            img[860+c: 900+c, 990+c: 1020+c] = 250
-            #img[376+c: 406+c, 346+c: 366+c] = 100
-            # img[212-8+c: 212+8+c, 490-8-c: 490+8-c] = 200
+        # for c, img in enumerate(rv):
+        #     #Marco los rois
+        #     img[850+c: 1000+c, 950+c: 1100+c] = 250
         return rv
 
     def run(self):
@@ -284,41 +283,41 @@ class AjustaNPs(_th.Thread):
         for img in images:
             xy_positions = self._locate_xy_centers(img)
             self.results.append(xy_positions)
+        self._imagenes = images
         _lgr.debug("Ending loop.")
 
 if __name__ == '__main__':
-    import matplotlib.pyplot as plt
-    filename = 'C:\\Users\\Cibion\\Pictures\\Data\\20241030\\output_video.tiff'
-    csv_filename = 'C:\\Users\\Cibion\\Pictures\\Data\\20241030\\frame_timestamps.csv' #Archivo con los tiempos en que se guarda cada frame
-    lup = AjustaNPs(23.5, filename)
-    # rois = _np.array([
-    #     [[512-20, 512+40],[990-20, 990+40]],
-    #     [[212-20, 212+40],[490-20, 490+40]],
-    #     ])
+    
+    NMPPX = 23.5 #nm
+    # TODO: Improve this to use a npy file
+    filename = 'C:\\Users\\Cibion\\Pictures\\Data\\20241030\\movimiento\\output_video.tiff'
+    csv_filename = 'C:\\Users\\Cibion\\Pictures\\Data\\20241030\\movimiento\\frame_timestamps.csv' #Archivo con los tiempos en que se guarda cada frame
+    lup = AjustaNPs(NMPPX, filename)
     rois = _np.array([
-        [[860,900],[990,1020]]
+        [[850,1000], [950,1100]]
         ])
+    
     lup.set_xy_rois(rois)
     lup.start_loop()
     lup.stop_loop()
-    times = load_frame_times(csv_filename)
-    times_relative_ms = [(t - times[0]) for t in times]  # en ms
     n_rois = lup.results[0].shape[0]
-    # plt.figure("taki")
-    # for _ in range(n_rois):
-    #     x = [p[_, 0] for p in lup.results]
-    #     y = [p[_, 1] for p in lup.results]
-    #     plt.plot(x, marker='x', label=f" x roi ={_}")
-    #     plt.plot(y, marker="o", label=f" y roi ={_}")
-    # plt.legend()
     
+    times = load_frame_times(csv_filename)
+    times_relative_ms = [(t - times[0]) for t in times] #ms
+
     plt.figure("Coordenadas vs Tiempos")
     for i in range(n_rois):
         x = [p[i, 0] for p in lup.results]
         y = [p[i, 1] for p in lup.results]
         plt.plot(times_relative_ms, x, marker='x', label=f"x roi = {i}")
         plt.plot(times_relative_ms, y, marker="o", label=f"y roi = {i}")    
-    plt.xlabel("Tiempo")
-    plt.ylabel("Coordenadas")
+    plt.xlabel("Tiempo, [s]")
+    plt.ylabel("Coordenadas, [px]")
     plt.legend()
     plt.show()
+    
+    x = _np.array(x)
+    y = _np.array(y)
+    plt.figure("Fullstack")
+    plt.imshow(_np.sum(lup._imagenes, axis=0).T)
+    plt.scatter(x, y)
