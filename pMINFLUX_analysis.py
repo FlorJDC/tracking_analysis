@@ -28,17 +28,23 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from PIL import Image
-import tools_pMINFLUX as tools
+from tools import tools_pMINFLUX as tools
+from scipy.optimize import curve_fit
+plt.close('all')
 
 # Parameters
 ABS_TIME_CONVERSION = 1e-3
 K, step_nm = 4, 1
-background_rate, tcspc_binning = 15600, 0.005 #[Hz],[s]
+background_rate, tcspc_binning = 160336, 0.005 #[Hz],[s]
 lifetime_win_i, lifetime_win_f = 0, 5
 
-# Open fitted experimental PSFs
-psf_dir = 'C:\\Users\\Cibion\\Pictures\\Data\\20241122\\psf_20241122_1_Resultados\\fit' #Fitted images
+def gauss(x, a, mu, sigma):
+    return a * np.exp(-((x - mu) ** 2) / (2 * sigma ** 2))
 
+# Open fitted experimental PSFs
+#psf_dir = 'C:\\Users\\Cibion\\Pictures\\Data\\20241122\\psf_20241122_1_Resultados\\fit' #Fitted images square
+#psf_dir = r'\\192.168.114.21\\Fileserver\na\Florencia Choque\Data\20250117\psf_20250117_13_Resultados\fit'
+psf_dir = 'C:\\Users\\Cibion\\Pictures\\Data\\20250117\\psf_20250117_13_Resultados\\fit'
 psf_fit, pos_min = [], []
 
 for fname in os.listdir(psf_dir):
@@ -54,8 +60,7 @@ psf_fit, pos_min = np.array(psf_fit), np.array(pos_min)
 
 colors = ['blue', 'orange', 'gray', 'yellow']
 
-
-# Plot PSFs
+# Plot PSFs with minima positions
 fig, axes = plt.subplots(2, 2, figsize=(8, 8))
 for i, ax in enumerate(axes.flat):
     ax.set(xlabel = 'x (nm)', ylabel= 'y (nm)')
@@ -65,12 +70,22 @@ for i, ax in enumerate(axes.flat):
     ax.set_title(f'Fitted PSF {i}', fontsize=10)
 plt.tight_layout()
 
-# Load TCSPC Data
+#%% Load TCSPC data from PH300 # Delete in near future!
 #tcspc_file = r'\\192.168.114.21\na\Florencia Choque\Data\20241122\Medicion_cuadrado_3\filename_arrays.txt'
-tcspc_file = r'C:\Users\Cibion\Pictures\Data\20241122\Medicion_cuadrado_3\filename_arrays.txt'
+#tcspc_file = r'C:\Users\Cibion\Pictures\Data\20241122\Medicion_cuadrado_3\filename_arrays.txt' #square
+#tcspc_file = r'C:\Users\Cibion\Pictures\Data\20250117\filename_10_arrays.txt'
+tcspc_file = r'C:\Users\Cibion\Pictures\Data\20250120\filename_10_arrays.txt'
 
-rel_time, abs_time = np.loadtxt(tcspc_file, unpack=True)
-abs_time *= ABS_TIME_CONVERSION
+coord = np.loadtxt(tcspc_file, unpack=True)
+rel_time = coord[0, :]
+abs_time = coord[1, :] * ABS_TIME_CONVERSION
+
+duracion = abs_time.max() - abs_time.min()
+mascara_duracion = (abs_time < abs_time.min() + duracion/3) # (abs_time > abs_time.min() + duracion*.5)
+
+rel_time = rel_time[mascara_duracion]
+abs_time = abs_time[mascara_duracion]
+
 rel_time_new = (rel_time + 17) % 50
 
 # τ values and histogram
@@ -81,8 +96,28 @@ for tau in τ:
     plt.axvline(tau, color='red', linestyle='--')
     plt.axvspan(tau + lifetime_win_i, tau + lifetime_win_f, color='red', alpha=0.2)
 plt.xlabel('Time [ns]'), plt.ylabel('Counts'), plt.legend(), plt.tight_layout()
+plt.show()
+#%% Load data from Swabian
+tcspc_file = r"C:\Users\Cibion\Pictures\Data\20250121\minflux_20250121_1.npy"
+rel_time = np.load(tcspc_file)
+rel_time = rel_time/1000.0 #ns
 
-# Estimate Positions
+rel_time_new = (rel_time + 17) % 50 # Modify!
+τ = np.array([0.2, 13.2, 25.5, 38.7])  # [ns] # Modify!
+
+plt.figure('Histogram_rel_time')
+plt.hist([rel_time, rel_time_new], bins = 300, range=(0,50), label= ['rel_time','rel_time_new'], alpha=0.7)
+for tau in τ:
+    plt.axvline(tau, color='red', linestyle='--')
+    plt.axvspan(tau + lifetime_win_i, tau + lifetime_win_f, color='red', alpha=0.2)
+
+plt.xlabel('Time [ns]')
+plt.ylabel('Counts')
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+#%% Estimate Positions
 nbins, bin_size = int(np.max(abs_time) / tcspc_binning), len(rel_time_new) // int(np.max(abs_time) / tcspc_binning)
 r0_est_nm, N, SBR = np.zeros((2, nbins)), np.zeros(nbins), np.zeros(nbins)
 
@@ -98,6 +133,51 @@ x_loc, y_loc = r0_est_nm[0] - pos_min[2][0], r0_est_nm[1] - pos_min[2][1]
 meanx, meany = np.mean(x_loc), np.mean(y_loc)
 sigmax, sigmay = np.std(x_loc), np.std(y_loc)
 
+#%%Gaussian fit
+# hist, bin_edges = np.histogram(x_loc, bins=30, density=True)
+# bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+# popt, pcov = curve_fit(gauss, bin_centers, hist, p0=[1, np.mean(x_loc), np.std(x_loc)])
+# a_fit, mu_fit, sigma_fit = popt
+
+# plt.figure()
+# x = np.linspace(min(x_loc), max(x_loc), 1000)
+# plt.hist(x_loc, bins=30, density=True, alpha=0.6, color='g', label='Data')
+# plt.plot(x, gauss(x, *popt), 'r-', label=f'Gaussian\n$\mu={mu_fit:.2f}, \sigma={sigma_fit:.2f}$')
+# plt.xlabel('x (nm)')
+# plt.ylabel('Density')
+# plt.legend()
+# plt.title('Gaussian fit x locs')
+# plt.show()
+
+# hist, bin_edges = np.histogram(y_loc, bins=30, density=True)
+# bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
+
+# popt, pcov = curve_fit(gauss, bin_centers, hist, p0=[1, np.mean(y_loc), np.std(y_loc)])
+# a_fit, mu_fit, sigma_fit = popt
+# plt.figure()
+# x = np.linspace(min(y_loc), max(y_loc), 1000)
+# plt.hist(y_loc, bins=30, density=True, alpha=0.6, color='g', label='Data')
+# plt.plot(x, gauss(x, *popt), 'r-', label=f'Gaussian\n$\mu={mu_fit:.2f}, \sigma={sigma_fit:.2f}$')
+# plt.xlabel('y (nm)')
+# plt.ylabel('Density')
+# plt.legend()
+# plt.title('Gaussian fit y locs')
+# plt.show()
+#%% Trace
+# times = np.linspace(0, abs_time, nbins)  
+# # Graficar las localizaciones en función del tiempo
+# plt.figure()#figsize=(10, 6))
+# plt.plot(times, x_loc, label='x', alpha=0.8, marker='o', markersize=4)
+# plt.plot(times, y_loc, label='y', alpha=0.8, marker='o', markersize=4)
+
+# plt.xlabel('time (s)')
+# plt.ylabel('Localizations')
+# plt.title('Time trace')
+# plt.legend()
+# plt.grid(True)
+# plt.show()
+#%%
 plt.figure('Localizations')
 for i, p in enumerate(pos_min):
     plt.scatter(*(p - pos_min[2]), color=colors[i], s=100)
@@ -125,11 +205,10 @@ ax.get_ylim()
 
 #%% CRB Calculation and Plot
 σ_CRB = tools.crb_minflux(K, psf_fit, np.mean(SBR), step_nm, size_nm, np.mean(N), method='1')
-
 # Create the CRB plot with the same extent as the scatter plots
 plt.figure('CRB_map')
 plt.imshow(σ_CRB, cmap='viridis', vmin=0, vmax=20)
-plt.colorbar(label='σ_CRB Value')
+plt.colorbar(label = f'σ_CRB Value, <N> = {np.round(np.mean(N), 1)}')
 
 # Plot PSF minima positions with the same color mapping as before
 for i, p in enumerate(pos_min):
