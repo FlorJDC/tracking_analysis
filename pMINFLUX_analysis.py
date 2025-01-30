@@ -35,7 +35,7 @@ plt.close('all')
 # Parameters
 ABS_TIME_CONVERSION = 1e-3
 K, step_nm = 4, 1
-background_rate, tcspc_binning = 160336, 0.005 #[Hz],[s]
+background_rate, tcspc_binning = 4945, 0.5 #[Hz],[s]
 lifetime_win_i, lifetime_win_f = 0, 5
 
 def gauss(x, a, mu, sigma):
@@ -44,20 +44,22 @@ def gauss(x, a, mu, sigma):
 # Open fitted experimental PSFs
 #psf_dir = 'C:\\Users\\Cibion\\Pictures\\Data\\20241122\\psf_20241122_1_Resultados\\fit' #Fitted images square
 #psf_dir = r'\\192.168.114.21\\Fileserver\na\Florencia Choque\Data\20250117\psf_20250117_13_Resultados\fit'
-psf_dir = 'C:\\Users\\Cibion\\Pictures\\Data\\20250117\\psf_20250117_13_Resultados\\fit'
+psf_dir = 'C:\\Users\\Cibion\\Pictures\\Data\\20250124\\psf_20250124_16_Resultados\\fit' #OJO! cambiar aquí
 psf_fit, pos_min = [], []
 
 for fname in os.listdir(psf_dir):
     if fname.lower().endswith((".tiff", ".tif")):
+        print(fname)
         img = np.array(Image.open(os.path.join(psf_dir, fname)))
         psf_fit.append(img)
         size = np.shape(img)[1]
         size_nm = size * step_nm
-        min_idx = np.unravel_index(np.argmin(img), img.shape)  # Convert to 2D index
+        min_idx = np.unravel_index(np.argmin(img), img.shape)  # i,j Convert to 2D index
+        print("min_idx: ", min_idx)
         pos_min.append(tools.indexToSpace(min_idx, size_nm, step_nm))
 
 psf_fit, pos_min = np.array(psf_fit), np.array(pos_min)
-
+print("pos_min: ", pos_min)
 colors = ['blue', 'orange', 'gray', 'yellow']
 
 # Plot PSFs with minima positions
@@ -69,41 +71,82 @@ for i, ax in enumerate(axes.flat):
                 color=colors[i], s=100)
     ax.set_title(f'Fitted PSF {i}', fontsize=10)
 plt.tight_layout()
-
+# #Plot EBP
+# x_min, y_min = pos_min[:, 0], pos_min[:, 1]
+# plt.figure('EBP')
+# for i in range(len(pos_min)):
+#     plt.scatter(x_min[i]- pos_min[0][0], y_min[i] - pos_min[0][1], c=colors[i], label=f'Dona {i+1}')
+# plt.title('EBP')
+# plt.xlabel('x (nm)')
+# plt.ylabel('y (nm)')
+# plt.axhline(0, color='gray', linestyle='--', linewidth=0.5)  # Línea horizontal en y=0
+# plt.axvline(0, color='gray', linestyle='--', linewidth=0.5)  # Línea vertical en x=0
+# plt.legend()
+# plt.axis("equal")
+# plt.grid(True)
+# plt.show()
 #%% Load TCSPC data from PH300 # Delete in near future!
-#tcspc_file = r'\\192.168.114.21\na\Florencia Choque\Data\20241122\Medicion_cuadrado_3\filename_arrays.txt'
-#tcspc_file = r'C:\Users\Cibion\Pictures\Data\20241122\Medicion_cuadrado_3\filename_arrays.txt' #square
-#tcspc_file = r'C:\Users\Cibion\Pictures\Data\20250117\filename_10_arrays.txt'
-tcspc_file = r'C:\Users\Cibion\Pictures\Data\20250120\filename_10_arrays.txt'
+# #tcspc_file = r'\\192.168.114.21\na\Florencia Choque\Data\20241122\Medicion_cuadrado_3\filename_arrays.txt'
+# #tcspc_file = r'C:\Users\Cibion\Pictures\Data\20241122\Medicion_cuadrado_3\filename_arrays.txt' #square
+# #tcspc_file = r'C:\Users\Cibion\Pictures\Data\20250117\filename_10_arrays.txt'
+# tcspc_file = r'C:\Users\Cibion\Pictures\Data\20250120\filename_10_arrays.txt'
 
-coord = np.loadtxt(tcspc_file, unpack=True)
-rel_time = coord[0, :]
-abs_time = coord[1, :] * ABS_TIME_CONVERSION
+# coord = np.loadtxt(tcspc_file, unpack=True)
+# rel_time = coord[0, :]
+# abs_time = coord[1, :] * ABS_TIME_CONVERSION
 
-duracion = abs_time.max() - abs_time.min()
-mascara_duracion = (abs_time < abs_time.min() + duracion/3) # (abs_time > abs_time.min() + duracion*.5)
+# duracion = abs_time.max() - abs_time.min()
+# mascara_duracion = (abs_time < abs_time.min() + duracion/3) # (abs_time > abs_time.min() + duracion*.5)
 
-rel_time = rel_time[mascara_duracion]
-abs_time = abs_time[mascara_duracion]
+# rel_time = rel_time[mascara_duracion]
+# abs_time = abs_time[mascara_duracion]
 
-rel_time_new = (rel_time + 17) % 50
+# rel_time_new = (rel_time + 17) % 50
 
-# τ values and histogram
-τ = np.array([0.2, 13.2, 25.5, 38.7]) # peak positions [ns]
-plt.figure('Histogram_rel_time')
-plt.hist([rel_time, rel_time_new], bins=300, label=['rel_time', 'rel_time_new'], alpha=0.7)
-for tau in τ:
-    plt.axvline(tau, color='red', linestyle='--')
-    plt.axvspan(tau + lifetime_win_i, tau + lifetime_win_f, color='red', alpha=0.2)
-plt.xlabel('Time [ns]'), plt.ylabel('Counts'), plt.legend(), plt.tight_layout()
-plt.show()
+# # τ values and histogram
+# τ = np.array([0.2, 13.2, 25.5, 38.7]) # peak positions [ns]
+# plt.figure('Histogram_rel_time')
+# plt.hist([rel_time, rel_time_new], bins=300, label=['rel_time', 'rel_time_new'], alpha=0.7)
+# for tau in τ:
+#     plt.axvline(tau, color='red', linestyle='--')
+#     plt.axvspan(tau + lifetime_win_i, tau + lifetime_win_f, color='red', alpha=0.2)
+# plt.xlabel('Time [ns]'), plt.ylabel('Counts'), plt.legend(), plt.tight_layout()
+# plt.show()
 #%% Load data from Swabian
-tcspc_file = r"C:\Users\Cibion\Pictures\Data\20250121\minflux_20250121_1.npy"
-rel_time = np.load(tcspc_file)
+#Archivos mediciones minflux: posición de los pulsos
+# tcspc_file = r"C:\Users\Cibion\Pictures\Data\20250124\20240124_Minflux\filename_20250124-184416_.npy" #Dona 4
+# tcspc_file = r"C:\Users\Cibion\Pictures\Data\20250124\20240124_Minflux\filename_20250124-184401_.npy" #Dona 3
+# tcspc_file = r"C:\Users\Cibion\Pictures\Data\20250124\20240124_Minflux\filename_20250124-184330_.npy" #Dona 2
+# tcspc_file = r"C:\Users\Cibion\Pictures\Data\20250124\20240124_Minflux\filename_20250124-184308_.npy" #Dona 1
+
+#tcspc_file = r"C:\Users\Cibion\Pictures\Data\20250124\20240124_Minflux\filename_20250124-183608_.npy" #centro en Dona 0
+#tcspc_file = r"C:\Users\Cibion\Pictures\Data\20250124\20240124_Minflux\filename_20250124-183802_.npy" # centro en Dona 1
+#tcspc_file = r"C:\Users\Cibion\Pictures\Data\20250124\20240124_Minflux\filename_20250124-183929_.npy" #centro en Dona 2
+#tcspc_file = r"C:\Users\Cibion\Pictures\Data\20250124\20240124_Minflux\filename_20250124-184104_.npy" #centro en Dona 3
+
+#Uso módulo minflux
+#tcspc_file = r"C:\Users\Cibion\Pictures\Data\20250124\standard_10s_center_20250124_20250124-192807_.npy" #Queda como a 70 nm del centro, hice escaneo grande?
+#tcspc_file = r"C:\Users\Cibion\Pictures\Data\20250124\minflux_test_triangle_30nm_5s_por_sitio_20250124_20250124-192545_.npy"
+#tcspc_file = r"C:\Users\Cibion\Pictures\Data\20250124\minflux_test_triangle_20nm_5s_por_sitio_20250124_20250124-192410_.npy" #Este triángulo dio bien
+#tcspc_file = r"C:\Users\Cibion\Pictures\Data\20250124\minflux_test_square_20nm_5s_por_sitio_20250124_20250124-192159_.npy" #Cuadrado OK
+tcspc_file = r"C:\Users\Cibion\Pictures\Data\20250124\minflux_test_square_20nm_5s_por_sitio_20250124_20250124-191936_.npy" #Cuadrado con datos raros por fuera
+#tcspc_file =  r"C:\Users\Cibion\Pictures\Data\20250124\minflux_test_square_20nm_5s_por_sitio_20250124_20250124-191744_.npy" # Cuadrado lindo 
+#tcspc_file =  r"C:\Users\Cibion\Pictures\Data\20250124\minflux_test_square_20250124_20250124-191442_.npy" #cuadrado de 30 nm da bien
+#tcspc_file =  r"C:\Users\Cibion\Pictures\Data\20250124\minflux_test_square_20250124_20250124-190936_.npy" #cuadrado de 30 nm da bien
+#tcspc_file =  r"C:\Users\Cibion\Pictures\Data\20250124\minflux_20250124_20250124-185453_.npy"
+
+all_data = np.load(tcspc_file)
+rel_time = all_data[:, 0]
+abs_time = all_data[:, 1]
+print("shape: ", rel_time.shape) #, rel_time.size)
+print("Rel max: ", rel_time.max(), "ps")
+print("Abs max: ", abs_time.max(), "Abs min: ", abs_time.min(), (abs_time.max()- abs_time.min())/1E12 ) #ps a s
+print("Tiempo de duración: ", (abs_time.max() - abs_time.min())/1E9, " ms.")
 rel_time = rel_time/1000.0 #ns
 
-rel_time_new = (rel_time + 17) % 50 # Modify!
-τ = np.array([0.2, 13.2, 25.5, 38.7])  # [ns] # Modify!
+rel_time_new = (rel_time - 15.8) % 50 # Modify!
+#τ = np.array([0.2, 13.2, 25.5, 38.7])  # [ns] 
+τ = np.array([0.98, 13.8, 26.12, 39.1])  # [ns] 
 
 plt.figure('Histogram_rel_time')
 plt.hist([rel_time, rel_time_new], bins = 300, range=(0,50), label= ['rel_time','rel_time_new'], alpha=0.7)
@@ -116,20 +159,26 @@ plt.ylabel('Counts')
 plt.legend()
 plt.tight_layout()
 plt.show()
-
 #%% Estimate Positions
-nbins, bin_size = int(np.max(abs_time) / tcspc_binning), len(rel_time_new) // int(np.max(abs_time) / tcspc_binning)
+
+nbins = int(((abs_time.max()- abs_time.min())/1E12)// tcspc_binning)
+bin_size = len(rel_time_new)//nbins
+print("nbins: ", nbins)
+print('bin_size: ', bin_size)
+#nbins, bin_size = int(np.max(abs_time) / tcspc_binning), len(rel_time_new) // int(np.max(abs_time) / tcspc_binning)
 r0_est_nm, N, SBR = np.zeros((2, nbins)), np.zeros(nbins), np.zeros(nbins)
 
 for i in range(nbins):
     window = rel_time_new[i * bin_size:(i + 1) * bin_size]
     SBR[i] = len(window) / (tcspc_binning * background_rate)
     n_array = tools.n_minflux(τ, window, lifetime_win_i, lifetime_win_f)
-    _, r0_est_nm[:, i], _ = tools.pos_minflux(n_array, psf_fit, SBR[i], step_nm) #Already in nm, check pos_minflux
     N[i] = np.sum(n_array)
-
-# Scatter Plot with Estimated Positions
-x_loc, y_loc = r0_est_nm[0] - pos_min[2][0], r0_est_nm[1] - pos_min[2][1]
+    _, r0_est_nm[:, i], _ = tools.pos_minflux(n_array, psf_fit, SBR[i], step_nm) #Already in nm, check pos_minflux
+    print(f"r0_est_nm[:,{i}]: ", r0_est_nm[:,i]) #Estas son las localizaciones de los puntos encontrados, tengo que pensar dónde cambia de posición
+    
+x_loc, y_loc = r0_est_nm[0] - pos_min[0][0], r0_est_nm[1] - pos_min[0][1] #Le resto esto porque es la referencia alrededor de la que quiero dibujar.
+# Entiendo que La estadística puede hacerse sobre estos puntos x_loc e y_loc
+print(x_loc,y_loc)
 meanx, meany = np.mean(x_loc), np.mean(y_loc)
 sigmax, sigmay = np.std(x_loc), np.std(y_loc)
 
@@ -165,22 +214,22 @@ sigmax, sigmay = np.std(x_loc), np.std(y_loc)
 # plt.title('Gaussian fit y locs')
 # plt.show()
 #%% Trace
-# times = np.linspace(0, abs_time, nbins)  
-# # Graficar las localizaciones en función del tiempo
-# plt.figure()#figsize=(10, 6))
-# plt.plot(times, x_loc, label='x', alpha=0.8, marker='o', markersize=4)
-# plt.plot(times, y_loc, label='y', alpha=0.8, marker='o', markersize=4)
+times = np.linspace(0, abs_time, nbins)  
+# Graficar las localizaciones en función del tiempo
+plt.figure()#figsize=(10, 6))
+plt.plot(times, x_loc, label='x', alpha=0.8, marker='o', markersize=4)
+plt.plot(times, y_loc, label='y', alpha=0.8, marker='o', markersize=4)
 
-# plt.xlabel('time (s)')
-# plt.ylabel('Localizations')
-# plt.title('Time trace')
-# plt.legend()
-# plt.grid(True)
-# plt.show()
+plt.xlabel('time (s)')
+plt.ylabel('Localizations')
+plt.title('Time trace')
+plt.legend()
+plt.grid(True)
+plt.show()
 #%%
 plt.figure('Localizations')
 for i, p in enumerate(pos_min):
-    plt.scatter(*(p - pos_min[2]), color=colors[i], s=100)
+    plt.scatter(*(p - pos_min[0]), color=colors[i], s=100)
 plt.scatter(x_loc, y_loc, c='gray', s=20, alpha=0.25)
 plt.scatter(np.mean(x_loc), np.mean(y_loc), color='black', marker='+')
 # Annotations
@@ -193,7 +242,7 @@ plt.gca().set_aspect('equal'), plt.xlabel('x (nm)'), plt.ylabel('y (nm)'), plt.t
 # Scatter Plot with Time Encoding
 plt.figure('Localizations_time_encoding')
 for i, p in enumerate(pos_min):
-    plt.scatter(*(p - pos_min[2]), color=colors[i], s=100)
+    plt.scatter(*(p - pos_min[0]), color=colors[i], s=100)
 plt.scatter(x_loc, y_loc, c=range(len(x_loc)), cmap='rainbow', s=20)
 plt.gca().set_aspect('equal'), plt.colorbar(label='Time encoding')
 plt.xlabel('x (nm)'), plt.ylabel('y (nm)'), plt.tight_layout()

@@ -62,9 +62,9 @@ def spaceToIndex(space, size_nm, px_nm):
 def indexToSpace(index, size_nm, px_nm):
 
     space = np.zeros(2)
-    space[0] = index[1]*px_nm - size_nm/2
-    space[1] = size_nm/2 - index[0]*px_nm
-
+    space[0] = index[1]*px_nm - size_nm/2 # -size_nm/2 desplaza el origen de las coordenadas al centro de la imagen (en lugar de estar en la esquina superior izquierda).
+    space[1] = size_nm/2 - index[0]*px_nm #Desplaza al centro de la imagen pero quisiera que pueda pasar no solo al centro de la imagen sino al centro de la dona cero
+    #size_nm / 2 - # invierte el eje vertical, porque los índices de la matriz comienzan en la parte superior izquierda (donde las filas aumentan hacia abajo), mientras que en un gráfico cartesiano el eje y aumenta hacia arriba.
     return np.array(space)
 
 
@@ -293,7 +293,6 @@ def n_minflux(τ, relTime, a, b):
     n : (1, K) array acquired photon collection.
     
     """
-    
     K = 4
     # total number of detected photons
     N = np.shape(relTime)[0]
