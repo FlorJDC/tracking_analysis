@@ -210,7 +210,7 @@ plt.colorbar(label="Density")
 #plt.scatter(x_loc, y_loc, c='gray', s=5, alpha=0.25)  #
 plt.xlabel('x (nm)')
 plt.ylabel('y (nm)')
-plt.title('Density of Localizations, , <N> = {np.mean(N)}')
+plt.title(f'Density of Localizations, , <N> = {int(np.mean(N))}')
 plt.show()
 
 #%% Pocos outliers Revisar si conviene usar esta manera
@@ -277,6 +277,26 @@ plt.ylabel('Localizations')
 plt.title('Time trace')
 plt.legend()
 plt.grid(True)
+plt.show()
+#%% CRB Calculation and Plot
+σ_CRB = tools.crb_minflux(K, psf_fit, np.mean(SBR), step_nm, size_nm, np.mean(N), method='1')
+
+# Create the CRB plot with the same extent as the scatter plots
+plt.figure('CRB_map')
+plt.imshow(σ_CRB, cmap='viridis', vmin=0, vmax=20)
+plt.colorbar(label='σ_CRB Value')
+
+# Plot PSF minima positions with the same color mapping as before
+for i, p in enumerate(pos_min):
+    plt.scatter(*np.unravel_index(np.argmin(psf_fit[i]), psf_fit[i].shape)[::-1], 
+                color=colors[i], s=100)
+
+# Ensure the axes and aspect ratio are the same as in scatter plots
+plt.gca().set_aspect('equal')
+plt.xlabel('x (nm)')
+plt.ylabel('y (nm)')
+plt.title('σ_CRB with Aligned Reference Frame')
+plt.tight_layout()
 plt.show()
 #%% Trace localizations - Analyse clouds
 time_seconds_binned = np.array([np.mean(abs_time[i * bin_size : (i + 1) * bin_size]) for i in range(nbins)])  
