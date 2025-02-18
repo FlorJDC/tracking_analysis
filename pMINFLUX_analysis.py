@@ -71,7 +71,7 @@ class EBP():
                     psf_fit = np.load(filepath)
                     psf_fit_list.append(psf_fit)
                     psf_size = np.shape(psf_fit)[1]
-                    size_nm = psf_size * step_nm
+                    self.size_nm = psf_size * step_nm
                     min_coords_fit_px = np.unravel_index(np.argmin(psf_fit, axis=None), psf_fit.shape)
                     min_coords_fit_px = (
                         min_coords_fit_px[1],
@@ -82,7 +82,7 @@ class EBP():
                         min_coords_fit_px[1] * step_nm
                     )
                     pos_min_list.append(min_coords_fit_nm)
-                    pos_min_centered_list.append(tools.indexToSpace(min_coords_fit_px, size_nm, step_nm))
+                    pos_min_centered_list.append(tools.indexToSpace(min_coords_fit_px, self.size_nm, step_nm))
 
         psf_fit_arr = np.array(psf_fit_list)
         pos_min_arr = np.array(pos_min_list)
@@ -213,6 +213,27 @@ class TCSPCData():
         print(f"Average signal counts: {self.avg_emittercounts - self.avg_bckg} Hz")
         print(f"Average background counts: {self.avg_bckg} Hz")
         print(f"SBR: {self.sbr}")
+        
+    def plot_crb(self):
+        # CRB Calculation and Plot
+        σ_CRB = tools.crb_minflux(K, self.ebp.psf_fits, np.mean(self.sbr), step_nm, self.ebp.size_nm, np.mean(self.avg_emittercounts), method='1')
+
+        # Create the CRB plot with the same extent as the scatter plots
+        plt.figure('CRB_map')
+        plt.imshow(σ_CRB, cmap='viridis', vmin=0, vmax=20)
+        plt.colorbar(label='σ_CRB Value')
+
+        # Plot PSF minima positions with the same color mapping as before
+        for i, p in enumerate(self.ebp.pos_mins):
+            plt.scatter(*np.unravel_index(np.argmin(self.ebp.psf_fits[i]), self.ebp.psf_fits[i].shape)[::-1], 
+                        color=self.ebp.psf_colors[i], s=100)
+
+        # Ensure the axes and aspect ratio are the same as in scatter plots
+        plt.gca().set_aspect('equal')
+        plt.xlabel('x (nm)')
+        plt.ylabel('y (nm)')
+        plt.title('σ_CRB with Aligned Reference Frame')
+        plt.tight_layout()
 
 if __name__ == "__main__":
     # Open fitted experimental PSFs
