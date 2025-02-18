@@ -35,15 +35,23 @@ from pathlib import Path
 from tools import tools_pMINFLUX as tools
 from scipy.optimize import curve_fit
 from scipy.stats import gaussian_kde
+from configvar import (
+    TCSPC_TIME_OFFSET,
+    LASER_PERIOD,
+    K,
+    STEP_NM,
+    LIFETIME_WIN_BEG,
+    LIFETIME_WIN_END,
+    PSF_DIR_BASE,
+    DATA_DIR_BASE
+)
+
 plt.close('all')
 
-# Parameters
-ABS_TIME_CONVERSION = 1e-3
-K, step_nm = 4, 1
-lifetime_win_i, lifetime_win_f = 0, 5
 
-psf_dir = Path('testdata') / 'psf' / '20250214'
-tcspc_file = Path('testdata') / '20250214' / 'clock_20250214-152357_.npy'
+date = '20250214'
+psf_dir = PSF_DIR_BASE / date
+tcspc_file = DATA_DIR_BASE / date / 'clock_20250214-152357_.npy'
 τ = np.array([0.98, 13.8, 26.12, 39.1])  # [ns] 
 timetrace_bin_width_s = 0.1
 
@@ -71,18 +79,18 @@ class EBP():
                     psf_fit = np.load(filepath)
                     psf_fit_list.append(psf_fit)
                     psf_size = np.shape(psf_fit)[1]
-                    self.size_nm = psf_size * step_nm
+                    self.size_nm = psf_size * STEP_NM
                     min_coords_fit_px = np.unravel_index(np.argmin(psf_fit, axis=None), psf_fit.shape)
                     min_coords_fit_px = (
                         min_coords_fit_px[1],
                         min_coords_fit_px[0]
                     )
                     min_coords_fit_nm = (
-                        min_coords_fit_px[0] * step_nm,
-                        min_coords_fit_px[1] * step_nm
+                        min_coords_fit_px[0] * STEP_NM,
+                        min_coords_fit_px[1] * STEP_NM
                     )
                     pos_min_list.append(min_coords_fit_nm)
-                    pos_min_centered_list.append(tools.indexToSpace(min_coords_fit_px, self.size_nm, step_nm))
+                    pos_min_centered_list.append(tools.indexToSpace(min_coords_fit_px, self.size_nm, STEP_NM))
 
         psf_fit_arr = np.array(psf_fit_list)
         pos_min_arr = np.array(pos_min_list)
@@ -129,7 +137,7 @@ class TCSPCData():
         self.abs_time_s, self.rel_time_ps = self.load_tcspc_data()
         self.tot_t_measuring = (self.abs_time_s.max() - self.abs_time_s.min())
         
-        self.plot_tcspc_data()
+        self.shift_and_plot_tcspc_data()
         self.plot_timetrace()
         self.filter_time_data()
         
@@ -144,10 +152,11 @@ class TCSPCData():
         abs_time_s = (abs_time_ps_woffset - abs_time_ps_woffset.min()) / 1e12 # ps to s and eliminate offset
         return abs_time_s, rel_time_ps
 
-    def plot_tcspc_data(self):
+    def shift_and_plot_tcspc_data(self):
         """
         This function plots the decay curves of the TCSPC data, with and without translation, and the time windows used for analysis.
         """
+        self.rel_time_shift_ps = (self.rel_time_ps - TCSPC_TIME_OFFSET) % LASER_PERIOD
         
 
     def plot_timetrace(self):
@@ -219,7 +228,7 @@ class TCSPCData():
         This function computes the crb based on the sbr we just computed and the time binning used for the time trace
         """
         # CRB Calculation and Plot
-        σ_CRB = tools.crb_minflux(K, self.ebp.psf_fits, np.mean(self.sbr), step_nm, self.ebp.size_nm, np.mean(self.avg_emittercounts), method='1')
+        σ_CRB = tools.crb_minflux(K, self.ebp.psf_fits, np.mean(self.sbr), STEP_NM, self.ebp.size_nm, np.mean(self.avg_emittercounts), method='1')
 
         # Create the CRB plot with the same extent as the scatter plots
         plt.figure('CRB_map')
@@ -243,12 +252,12 @@ if __name__ == "__main__":
     ebp = EBP(psf_dir)
     tcspc_data = TCSPCData(ebp, tcspc_file, timetrace_bin_width_s)
  
-'''
+
 plt.figure('Histogram rel_time')
 plt.hist([rel_time, rel_time_new], bins = 300, range=(0,50), label= ['rel_time','rel_time_new'], alpha=0.7)
 for tau in τ:
     plt.axvline(tau, color='red', linestyle='--')
-    plt.axvspan(tau + lifetime_win_i, tau + lifetime_win_f, color='red', alpha=0.2)
+    plt.axvspan(tau + LIFETIME_WIN_BEG, tau + LIFETIME_WIN_END, color='red', alpha=0.2)
 
 plt.xlabel('Time [ns]')
 plt.ylabel('Counts')
@@ -274,9 +283,9 @@ r0_est_nm, N, SBR = np.zeros((2, nbins)), np.zeros(nbins), np.zeros(nbins)
 for i in range(nbins):
     window = rel_time_new[i * bin_size:(i + 1) * bin_size]
     SBR[i] = len(window) / (locs_t_binning_s * background_rate)
-    n_array = tools.n_minflux(τ, window, lifetime_win_i, lifetime_win_f)
+    n_array = tools.n_minflux(τ, window, LIFETIME_WIN_BEG, LIFETIME_WIN_END)
     N[i] = np.sum(n_array)
-    _, r0_est_nm[:, i], _ = tools.pos_minflux(n_array, psf_fit_arr, SBR[i], step_nm) #Already in nm, check pos_minflux
+    _, r0_est_nm[:, i], _ = tools.pos_minflux(n_array, psf_fit_arr, SBR[i], STEP_NM) #Already in nm, check pos_minflux
 print(f"<N> = {np.round(np.mean(N),0)}")
 x_loc, y_loc = r0_est_nm[0] - pos_min_arr[0][0], r0_est_nm[1] - pos_min_arr[0][1] #Le resto esto porque es la referencia alrededor de la que quiero dibujar.
 meanx, meany = np.mean(x_loc), np.mean(y_loc)
@@ -537,4 +546,3 @@ ax.set_aspect('equal')
 ax.legend()
 plt.title('')
 plt.show()
-'''
