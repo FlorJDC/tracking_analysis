@@ -55,6 +55,7 @@ psf_dir = PSF_DIR_BASE / date
 tcspc_file = DATA_DIR_BASE / date / 'clock_20250214-152357_.npy'
 τ = np.array([0.98, 13.8, 26.12, 39.1])  # [ns] 
 timetrace_bin_width_s = 0.1
+target_n_ph = 1000
 
 def gauss(x, a, mu, sigma):
     return a * np.exp(-((x - mu) ** 2) / (2 * sigma ** 2))
@@ -175,17 +176,17 @@ class TCSPCData():
         Based on this information, it automatically identifies the bleaching step as the last moment the molecule goes below
         the intensity threshold and never recovers, and computes the background counts and average SBR.
         """
-        start_t_input = input("Start time for analysis in s (input nothing for 0):")
+        start_t_input = input("Start time for analysis in s (input nothing for 0): ")
         if not start_t_input:
             self.start_t_s = 0.0
         else:
             self.start_t_s = float(start_t_input)
-        end_t_input = input("End time for analysis in s (input nothing for end of the trace):")
+        end_t_input = input("End time for analysis in s (input nothing for end of the trace): ")
         if not end_t_input:
             self.end_t_s = self.tot_t_measuring
         else:
             self.end_t_s = float(end_t_input)
-        int_threshold = float(input("Intensity threshold for signal in Hz:"))
+        int_threshold = float(input("Intensity threshold for signal in Hz: "))
         
         # find all the bin (left) edges where the molecule intensity is below the threshold
         dark_bin_edges = self.raw_timetrace_bin_edges[:-1][self.raw_timetrace_counts_hz < int_threshold]
@@ -217,9 +218,9 @@ class TCSPCData():
         )]
         self.photons_tokeep = len(self.filt_abs_time_s)
         print(f"The molecule emitted {self.photons_tokeep} photons in the relevant part of the measurement")
-        self.avg_emitter_counts = self.photons_tokeep / (self.emitter_stop_t_s - self.start_t_s)
         self.avg_bckg_counts = (len(self.bckg_abs_time_s) / (self.end_t_s - self.bckg_start_t_s))
-        self.avg_sbr = self.avg_emitter_counts / self.avg_bckg_counts - 1
+        self.avg_emitter_counts = self.photons_tokeep / (self.emitter_stop_t_s - self.start_t_s) - self.avg_bckg_counts
+        self.avg_sbr = self.avg_emitter_counts / self.avg_bckg_counts
         print("*****************************")
         print("Measure parameters before TCSPC timegating and considering all pulses:")
         print(f"Average signal counts: {self.avg_emitter_counts - self.avg_bckg_counts} Hz")
@@ -265,6 +266,9 @@ class TCSPCData():
         """
         self.abs_time_s_foranalysis_perpulse = []
         self.emitter_counts_perpulse = []
+        self.allpulses_tot_counts_timegated = 0
+        self.allpulses_emitter_counts_timegated = 0
+        self.allpulses_bckg_counts_timegated = 0
         self.bckg_counts_perpulse = []
         self.sbr_perpulse = []
         for pulse_idx in range(NUM_PULSE):
@@ -297,11 +301,15 @@ class TCSPCData():
         print("Measure parameters after TCSPC timegating and per pulse:")
         for pulse_idx in range(NUM_PULSE):
             print(f"Signal counts for pulse {pulse_idx}: {self.emitter_counts_perpulse[pulse_idx]} Hz")
+            self.allpulses_emitter_counts_timegated += self.emitter_counts_perpulse[pulse_idx]
             print(f"Background counts for pulse {pulse_idx}: {self.bckg_counts_perpulse[pulse_idx]} Hz")
+            self.allpulses_bckg_counts_timegated += self.bckg_counts_perpulse[pulse_idx]
+            self.allpulses_tot_counts_timegated = self.allpulses_emitter_counts_timegated + self.allpulses_bckg_counts_timegated
             print(f"SBR  for pulse {pulse_idx}: {self.sbr_perpulse[pulse_idx]}")
+        print(f"Signal counts for all pulses used for analysis: {self.allpulses_emitter_counts_timegated}")
+        print(f"Background counts for all pulses: {self.allpulses_bckg_counts_timegated}")
         print("*****************************")
-   
-        
+     
     def plot_crb(self):
         """
         This function computes the crb based on the sbr we just computed and the time binning used for the time trace
@@ -326,10 +334,27 @@ class TCSPCData():
         plt.title('σ_CRB with Aligned Reference Frame')
         plt.tight_layout()
 
+class MINFLUXAnalysis():
+    def __init__(self, tcspc_data: TCSPCData, target_n_ph: int):
+        self.tcspc_data = tcspc_data
+        self.target_n_ph = target_n_ph
+        self.choose_locs_t_binning()
+        
+    def choose_locs_t_binning(self):
+        target_locs_t_binning_s = float(self.target_n_ph) / self.tcspc_data.allpulses_tot_counts_timegated
+        print(f"Localization time binning (in s) to obtain {self.target_n_ph} photons per bin: {target_locs_t_binning_s}")
+        self.locs_t_binning_s = float(input("Choose localization time binning (in s): "))
+        self.avg_n_ph_perloc = self.tcspc_data.allpulses_tot_counts_timegated * self.locs_t_binning_s
+        print(f"Average number of photons per localization: {self.avg_n_ph_perloc}")
+        
+    
+        
+
 if __name__ == "__main__":
     # Open fitted experimental PSFs
     ebp = EBP(psf_dir)
     tcspc_data = TCSPCData(ebp, tcspc_file, timetrace_bin_width_s, τ)
+    minflux_analysis = MINFLUXAnalysis(tcspc_data, target_n_ph)
 
 # Estimate Positions
 counts_each_bin = float(input("Ingresa counts totales por bin: "))
