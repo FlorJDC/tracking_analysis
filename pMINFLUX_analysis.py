@@ -30,6 +30,8 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 from matplotlib.patches import Ellipse
 from PIL import Image
+from natsort import natsorted
+from pathlib import Path
 from tools import tools_pMINFLUX as tools
 from scipy.optimize import curve_fit
 from scipy.stats import gaussian_kde
@@ -40,96 +42,184 @@ ABS_TIME_CONVERSION = 1e-3
 K, step_nm = 4, 1
 lifetime_win_i, lifetime_win_f = 0, 5
 
+psf_dir = Path('testdata') / 'psf' / '20250214'
+tcspc_file = Path('testdata') / '20250214' / 'clock_20250214-152357_.npy'
+τ = np.array([0.98, 13.8, 26.12, 39.1])  # [ns] 
+timetrace_bin_width_s = 0.1
+
 def gauss(x, a, mu, sigma):
     return a * np.exp(-((x - mu) ** 2) / (2 * sigma ** 2))
 
-# Open fitted experimental PSFs
-psf_dir = 'C:\\Users\\Cibion\\Pictures\\Data\\20250214\\psf_20250214_11\\fit'
-psf_fit, pos_min = [], []
+class EBP():
+    def __init__(self, psf_dir: Path):
+        self.psf_dir = psf_dir
+        self.psf_colors = ['blue', 'orange', 'gray', 'yellow']
+        self.psf_fits, self.pos_mins, self.pos_mins_centered = self.open_psf()
+        self.plot_psf()
 
-for fname in os.listdir(psf_dir):
-    if fname.lower().endswith((".tiff", ".tif")):
-        img = np.array(Image.open(os.path.join(psf_dir, fname)))
-        psf_fit.append(img)
-        size = np.shape(img)[1]
-        size_nm = size * step_nm
-        min_idx = np.unravel_index(np.argmin(img), img.shape)  # i,j Convert to 2D index
-        print("min_idx: ", min_idx)
-        pos_min.append(tools.indexToSpace(min_idx, size_nm, step_nm))
+    def open_psf(self):
+        """
+        This function opens the specified data folder, reads in natural alphabetic order all the .npy
+        files, which should contain the numpy arrays of the experimental PSFs, and loads them
+        """
+        psf_fit_list = []
+        pos_min_list = []
+        pos_min_centered_list = []
+        for filepath in natsorted(self.psf_dir.iterdir()):
+            if filepath.is_file():
+                if filepath.suffix == '.npy':
+                    psf_fit = np.load(filepath)
+                    psf_fit_list.append(psf_fit)
+                    psf_size = np.shape(psf_fit)[1]
+                    size_nm = psf_size * step_nm
+                    min_coords_fit_px = np.unravel_index(np.argmin(psf_fit, axis=None), psf_fit.shape)
+                    min_coords_fit_px = (
+                        min_coords_fit_px[1],
+                        min_coords_fit_px[0]
+                    )
+                    min_coords_fit_nm = (
+                        min_coords_fit_px[0] * step_nm,
+                        min_coords_fit_px[1] * step_nm
+                    )
+                    pos_min_list.append(min_coords_fit_nm)
+                    pos_min_centered_list.append(tools.indexToSpace(min_coords_fit_px, size_nm, step_nm))
 
-psf_fit, pos_min = np.array(psf_fit), np.array(pos_min)
-print("pos_min: ", pos_min)
-colors = ['blue', 'orange', 'gray', 'yellow']
+        psf_fit_arr = np.array(psf_fit_list)
+        pos_min_arr = np.array(pos_min_list)
+        pos_min_centered_arr = np.array(pos_min_list)
+        
+        return psf_fit_arr, pos_min_arr, pos_min_centered_arr
+    
+    def plot_psf(self):
+        """
+        This function plots the individual experimental PSFs and the EBP
+        """
+        # Plot PSFs with minima positions
+        fig, axes = plt.subplots(2, 2, figsize=(8, 8))
+        for i, ax in enumerate(axes.flat):
+            ax.set(xlabel = 'x (nm)', ylabel= 'y (nm)')
+            ax.imshow(self.psf_fits[i], cmap='viridis', origin='lower')
+            ax.scatter(*self.pos_mins[i],
+                        color=self.psf_colors[i], s=100)
+            ax.set_title(f'Fitted PSF {i + 1}', fontsize=10)
+        plt.tight_layout()
 
-# Plot PSFs with minima positions
-fig, axes = plt.subplots(2, 2, figsize=(8, 8))
-for i, ax in enumerate(axes.flat):
-    ax.set(xlabel = 'x (nm)', ylabel= 'y (nm)')
-    ax.imshow(psf_fit[i], cmap='viridis')
-    ax.scatter(*np.unravel_index(np.argmin(psf_fit[i]), psf_fit[i].shape)[::-1], 
-                color=colors[i], s=100)
-    ax.set_title(f'Fitted PSF {i}', fontsize=10)
-plt.tight_layout()
+        #Plot EBP
+        x_min, y_min = self.pos_mins[:, 0], self.pos_mins[:, 1]
+        plt.figure('EBP')
+        for i in range(len(self.pos_mins)):
+            plt.scatter(x_min[i]- self.pos_mins[0][0], y_min[i] - self.pos_mins[0][1], c=self.psf_colors[i], label=f'{i+1}')
+        plt.title('EBP')
+        plt.xlabel('x (nm)')
+        plt.ylabel('y (nm)')
+        plt.axhline(0, color='gray', linestyle='--', linewidth=0.5)
+        plt.axvline(0, color='gray', linestyle='--', linewidth=0.5)
+        plt.legend()
+        plt.axis("equal")
+        plt.grid(True)
+        plt.show()
 
-# #Plot EBP
-x_min, y_min = pos_min[:, 0], pos_min[:, 1]
-plt.figure('EBP')
-for i in range(len(pos_min)):
-    plt.scatter(x_min[i]- pos_min[0][0], y_min[i] - pos_min[0][1], c=colors[i], label=f'{i+1}')
-plt.title('EBP')
-plt.xlabel('x (nm)')
-plt.ylabel('y (nm)')
-plt.axhline(0, color='gray', linestyle='--', linewidth=0.5)
-plt.axvline(0, color='gray', linestyle='--', linewidth=0.5)
-plt.legend()
-plt.axis("equal")
-plt.grid(True)
-plt.show()
-#%% Load data from Swabian TimeTagger
-tcspc_file = r'C:\Users\Cibion\Pictures\Data\20250214\clock\clock_20250214-152357_.npy' #37000, 6500
-all_data = np.load(tcspc_file)
-rel_time = all_data[2,:]
-abs_time = all_data[1,:]
+class TCSPCData():
+    def __init__(self, ebp: EBP, tcspc_data_path: Path, timetrace_bin_width_s: float):
+        self.ebp = ebp
+        self.tcspc_data_path = tcspc_data_path
+        
+        self.timetrace_bin_width_s = timetrace_bin_width_s
+        
+        self.abs_time_s, self.rel_time_ps = self.load_tcspc_data()
+        self.tot_t_measuring = (self.abs_time_s.max() - self.abs_time_s.min())
+        
+        self.plot_tcspc_data()
+        self.plot_timetrace()
+        self.filter_time_data()
+        
+    def load_tcspc_data(self):
+        """
+        This function loads the TCSPC data from a .npy file, loading both the absolute and relative times
+        of the events
+        """
+        all_data = np.load(self.tcspc_data_path)
+        rel_time_ps = all_data[2,:]
+        abs_time_ps_woffset = all_data[1,:]
+        abs_time_s = (abs_time_ps_woffset - abs_time_ps_woffset.min()) / 1e12 # ps to s and eliminate offset
+        return abs_time_s, rel_time_ps
 
-abs_time_s = (abs_time - abs_time.min()) / 1e12 # ps to s
-time_measuring = (abs_time.max() - abs_time.min())/1E12
-print("Tiempo de duración: ", time_measuring, " s") #ps to s
-num_bins = 500
-time_each_bin=time_measuring/num_bins #s
-print("Tiempo de cada bin: ", np.round(time_each_bin,3), "s.")
+    def plot_tcspc_data(self):
+        """
+        This function plots the decay curves of the TCSPC data, with and without translation, and the time windows used for analysis.
+        """
+        
 
-plt.figure("Histogram abs_time")
-plt.hist(abs_time_s, bins=num_bins, alpha=0.7, color='blue')
-plt.xlabel("Time [s]")
-plt.ylabel("Counts")
-plt.title("")
-plt.tight_layout()
-plt.show()
+    def plot_timetrace(self):
+        """
+        This function plots the intensity time trace of the measurement
+        """
+        plt.figure("Histogram abs_time")
+        self.raw_timetrace_bin_edges = np.arange(0, self.tot_t_measuring + self.timetrace_bin_width_s, self.timetrace_bin_width_s)
+        self.raw_timetrace_counts_hz, _, _ = plt.hist(self.abs_time_s, bins=self.raw_timetrace_bin_edges, alpha=0.7, color='blue', weights=np.ones_like(self.abs_time_s) / self.timetrace_bin_width_s)
+        plt.xlabel("Time [s]")
+        plt.ylabel("Counts [Hz]")
+        plt.title("Time trace")
+        plt.tight_layout()
+        plt.show()
+        
+    def filter_time_data(self):
+        """
+        This function asks the user the start and end time and the intensity threshold to select the relevant part of the measurement
+        to be analysed, and filter all the data using these parameters and the relative time windows.
+        Based on this information, it automatically identifies the bleaching step as the last moment the molecule goes below
+        the intensity threshold and never recovers, and computes the background counts and average SBR.
+        """
+        start_t_input = input("Start time for analysis in s (input nothing for 0):")
+        if not start_t_input:
+            self.start_t_s = 0.0
+        else:
+            self.start_t_s = float(start_t_input)
+        end_t_input = input("End time for analysis in s (input nothing for end of the trace):")
+        if not end_t_input:
+            self.end_t_s = self.tot_t_measuring
+        else:
+            self.end_t_s = float(end_t_input)
+        int_threshold = float(input("Intensity threshold for signal in Hz:"))
+        
+        # find all the bin (left) edges where the molecule intensity is below the threshold
+        dark_bin_edges = self.raw_timetrace_bin_edges[:-1][self.raw_timetrace_counts_hz < int_threshold]
+        # compute times until two nearest dark bins. The n-th element is the time between the (n-1)-th and the n-th dark bin
+        t_tonext_dark_bin = np.concatenate(([dark_bin_edges[0]], np.diff(dark_bin_edges)))
+        # find the first bin of each dark period of the molecule
+        start_dark_time = dark_bin_edges[t_tonext_dark_bin > (self.timetrace_bin_width_s * 1.5)]
+        # the bleaching step is selected as the last time the molecule goes dark and never recovers
+        self.bleach_t_s = start_dark_time[-1]
+        print(f"Molecule photobleached at {self.bleach_t_s} s")
+        # here we compute the emitter and background counts and the estimated SBR
+        self.emitter_stop_t_s = self.bleach_t_s - self.timetrace_bin_width_s
+        self.bckg_start_t_s = self.bleach_t_s + self.timetrace_bin_width_s
+        self.filt_rel_time_s = self.rel_time_ps[np.logical_and(
+            self.abs_time_s > self.start_t_s,
+            self.abs_time_s < np.min((self.end_t_s, self.emitter_stop_t_s))
+        )]
+        self.filt_abs_time_s = self.abs_time_s[np.logical_and(
+            self.abs_time_s > self.start_t_s,
+            self.abs_time_s < np.min((self.end_t_s, self.emitter_stop_t_s))
+        )]
+        self.photons_tokeep = len(self.filt_abs_time_s)
+        print(f"The molecule emitted {self.photons_tokeep} photons in the relevant part of the measurement")
+        self.avg_emittercounts = self.photons_tokeep / (self.emitter_stop_t_s - self.start_t_s)
+        self.avg_bckg = (len(self.abs_time_s[np.logical_and(
+                self.abs_time_s > self.bckg_start_t_s,
+                self.abs_time_s < self.end_t_s
+            )]) / (self.end_t_s - self.bckg_start_t_s))
+        self.sbr = self.avg_emittercounts / self.avg_bckg - 1
+        print(f"Average signal counts: {self.avg_emittercounts - self.avg_bckg} Hz")
+        print(f"Average background counts: {self.avg_bckg} Hz")
+        print(f"SBR: {self.sbr}")
 
-print("abs shape: ", abs_time.shape)
-print("rel shape: ", rel_time.shape) #, rel_time.size)
-print("Rel max: ", rel_time.max(), "ps")
-
-rel_time = rel_time/1000.0 #ps to ns
-
-duracion = abs_time.max() - abs_time.min()
-inicio_s = float(input("Ingresa el inicio en s: "))
-inicio_frac = np.round(inicio_s/time_measuring,2)
-fin_s = float(input("Ingresa el final en s: "))
-fin_frac = np.round(fin_s/time_measuring,2)
-print("inicio s: ", inicio_frac, "fin_frac: ", fin_frac)
-inicio_abs = abs_time.min() + inicio_frac * duracion
-fin_abs = abs_time.min() + fin_frac * duracion
-
-filter_data = (abs_time >= inicio_abs) & (abs_time <= fin_abs)
-rel_time = rel_time[filter_data]
-abs_time = abs_time[filter_data]
-print(f"Datos filtrados en el rango {inicio_frac*100:.1f}% - {fin_frac*100:.1f}% del tiempo total")
-
-rel_time_new = (rel_time - 15.8) % 50 # Modify!
-#τ = np.array([0.2, 13.2, 25.5, 38.7])  # [ns] 
-τ = np.array([0.98, 13.8, 26.12, 39.1])  # [ns] 
-
+if __name__ == "__main__":
+    # Open fitted experimental PSFs
+    ebp = EBP(psf_dir)
+    tcspc_data = TCSPCData(ebp, tcspc_file, timetrace_bin_width_s)
+ 
+'''
 plt.figure('Histogram rel_time')
 plt.hist([rel_time, rel_time_new], bins = 300, range=(0,50), label= ['rel_time','rel_time_new'], alpha=0.7)
 for tau in τ:
@@ -147,11 +237,11 @@ counts_bkg_each_bin = float(input("Ingresa counts de bkg por bin: "))
 
 background_rate = counts_bkg_each_bin//time_each_bin #Hz
 signal_rate = counts_each_bin/time_each_bin #Hz
-tcspc_binning = 0.06 #[s]
+locs_t_binning_s = 0.06 #[s]
 print("Signal_rate: ", signal_rate, "Hz")
 print("Background rate: ", background_rate, "Hz")
 print("SBR aprox: ", (signal_rate - background_rate)/background_rate)
-nbins = int(((abs_time.max()- abs_time.min())/1E12)// tcspc_binning)
+nbins = int(((abs_time.max()- abs_time.min())/1E12)// locs_t_binning_s)
 bin_size = len(rel_time_new)//nbins
 print("nbins: ", nbins)
 print('bin_size: ', bin_size)
@@ -159,18 +249,18 @@ r0_est_nm, N, SBR = np.zeros((2, nbins)), np.zeros(nbins), np.zeros(nbins)
 
 for i in range(nbins):
     window = rel_time_new[i * bin_size:(i + 1) * bin_size]
-    SBR[i] = len(window) / (tcspc_binning * background_rate)
+    SBR[i] = len(window) / (locs_t_binning_s * background_rate)
     n_array = tools.n_minflux(τ, window, lifetime_win_i, lifetime_win_f)
     N[i] = np.sum(n_array)
-    _, r0_est_nm[:, i], _ = tools.pos_minflux(n_array, psf_fit, SBR[i], step_nm) #Already in nm, check pos_minflux
+    _, r0_est_nm[:, i], _ = tools.pos_minflux(n_array, psf_fit_arr, SBR[i], step_nm) #Already in nm, check pos_minflux
 print(f"<N> = {np.round(np.mean(N),0)}")
-x_loc, y_loc = r0_est_nm[0] - pos_min[0][0], r0_est_nm[1] - pos_min[0][1] #Le resto esto porque es la referencia alrededor de la que quiero dibujar.
+x_loc, y_loc = r0_est_nm[0] - pos_min_arr[0][0], r0_est_nm[1] - pos_min_arr[0][1] #Le resto esto porque es la referencia alrededor de la que quiero dibujar.
 meanx, meany = np.mean(x_loc), np.mean(y_loc)
 sigmax, sigmay = np.std(x_loc), np.std(y_loc)
 #%% Localizations
 plt.figure('Localizations')
-for i, p in enumerate(pos_min):
-    plt.scatter(*(p - pos_min[0]), color=colors[i], s=100)
+for i, p in enumerate(pos_min_arr):
+    plt.scatter(*(p - pos_min_arr[0]), color=colors[i], s=100)
 plt.scatter(x_loc, y_loc, c='gray', s=20, alpha=0.25)
 plt.scatter(np.mean(x_loc), np.mean(y_loc), color='black', marker='+')
 # Annotations
@@ -182,8 +272,8 @@ plt.gca().set_aspect('equal'), plt.xlabel('x (nm)'), plt.ylabel('y (nm)'), plt.t
 
 # Scatter Plot with Time Encoding
 plt.figure('Localizations_time_encoding')
-for i, p in enumerate(pos_min):
-    plt.scatter(*(p - pos_min[0]), color=colors[i], s=100)
+for i, p in enumerate(pos_min_arr):
+    plt.scatter(*(p - pos_min_arr[0]), color=colors[i], s=100)
 plt.scatter(x_loc, y_loc, c=range(len(x_loc)), cmap='rainbow', s=20)
 plt.gca().set_aspect('equal'), plt.colorbar(label='Time encoding')
 plt.xlabel('x (nm)'), plt.ylabel('y (nm)'), plt.tight_layout()
@@ -333,7 +423,7 @@ for i, (start, end) in enumerate(nube_ranges):
     plt.figure()
     x = np.linspace(min(x_nube), max(x_nube), 1000)
     plt.hist(x_nube, bins=30, density=True, alpha=0.6, color='g', label='Data')
-    plt.plot(x, gauss(x, *popt), 'r-', label=f'Gaussian\n$\mu={mu_fit:.2f}, \sigma={sigma_fit:.2f}$')
+    plt.plot(x, gauss(x, *popt), 'r-', label=r'Gaussian\n$\mu={mu_fit:.2f}, \sigma={sigma_fit:.2f}$')
     plt.xlabel('x (nm)')
     plt.ylabel('Density')
     plt.legend()
@@ -348,7 +438,7 @@ for i, (start, end) in enumerate(nube_ranges):
     plt.figure()
     x = np.linspace(min(y_loc), max(y_loc), 1000)
     plt.hist(y_nube, bins=30, density=True, alpha=0.6, color='g', label='Data')
-    plt.plot(x, gauss(x, *popt), 'r-', label=f'Gaussian\n$\mu={mu_fit:.2f}, \sigma={sigma_fit:.2f}$')
+    plt.plot(x, gauss(x, *popt), 'r-', label=r'Gaussian\n$\mu={mu_fit:.2f}, \sigma={sigma_fit:.2f}$')
     plt.xlabel('y (nm)')
     plt.ylabel('Density')
     plt.legend()
@@ -423,3 +513,4 @@ ax.set_aspect('equal')
 ax.legend()
 plt.title('')
 plt.show()
+'''
