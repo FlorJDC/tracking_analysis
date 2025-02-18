@@ -25,6 +25,7 @@ This code still requires adaptation for tracking experiments using Swabian hardw
 """
 
 import os
+import copy
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -36,12 +37,12 @@ from tools import tools_pMINFLUX as tools
 from scipy.optimize import curve_fit
 from scipy.stats import gaussian_kde
 from configvar import (
-    TCSPC_TIME_OFFSET,
-    LASER_PERIOD,
-    K,
+    TCSPC_TIME_OFFSET_NS,
+    LASER_PERIOD_NS,
+    NUM_PULSE,
     STEP_NM,
-    LIFETIME_WIN_BEG,
-    LIFETIME_WIN_END,
+    LIFETIME_WIN_BEG_NS,
+    LIFETIME_WIN_END_NS,
     PSF_DIR_BASE,
     DATA_DIR_BASE
 )
@@ -128,18 +129,20 @@ class EBP():
         plt.show()
 
 class TCSPCData():
-    def __init__(self, ebp: EBP, tcspc_data_path: Path, timetrace_bin_width_s: float):
+    def __init__(self, ebp: EBP, tcspc_data_path: Path, timetrace_bin_width_s: float, τ: list):
         self.ebp = ebp
         self.tcspc_data_path = tcspc_data_path
-        
         self.timetrace_bin_width_s = timetrace_bin_width_s
+        self.τ = τ
         
         self.abs_time_s, self.rel_time_ps = self.load_tcspc_data()
+        self.rel_time_ns = self.rel_time_ps * 1e-3
         self.tot_t_measuring = (self.abs_time_s.max() - self.abs_time_s.min())
         
-        self.shift_and_plot_tcspc_data()
         self.plot_timetrace()
         self.filter_time_data()
+        self.shift_and_plot_tcspc_data()
+        self.prep_ph_foranalysis()
         
     def load_tcspc_data(self):
         """
@@ -151,13 +154,6 @@ class TCSPCData():
         abs_time_ps_woffset = all_data[1,:]
         abs_time_s = (abs_time_ps_woffset - abs_time_ps_woffset.min()) / 1e12 # ps to s and eliminate offset
         return abs_time_s, rel_time_ps
-
-    def shift_and_plot_tcspc_data(self):
-        """
-        This function plots the decay curves of the TCSPC data, with and without translation, and the time windows used for analysis.
-        """
-        self.rel_time_shift_ps = (self.rel_time_ps - TCSPC_TIME_OFFSET) % LASER_PERIOD
-        
 
     def plot_timetrace(self):
         """
@@ -199,36 +195,119 @@ class TCSPCData():
         start_dark_time = dark_bin_edges[t_tonext_dark_bin > (self.timetrace_bin_width_s * 1.5)]
         # the bleaching step is selected as the last time the molecule goes dark and never recovers
         self.bleach_t_s = start_dark_time[-1]
-        print(f"Molecule photobleached at {self.bleach_t_s} s")
+        print(f"Molecule photobleached after {self.bleach_t_s} s")
         # here we compute the emitter and background counts and the estimated SBR
         self.emitter_stop_t_s = self.bleach_t_s - self.timetrace_bin_width_s
         self.bckg_start_t_s = self.bleach_t_s + self.timetrace_bin_width_s
-        self.filt_rel_time_s = self.rel_time_ps[np.logical_and(
+        self.filt_rel_time_ns = self.rel_time_ns[np.logical_and(
             self.abs_time_s > self.start_t_s,
             self.abs_time_s < np.min((self.end_t_s, self.emitter_stop_t_s))
+        )]
+        self.filt_rel_time_bckg_ns = self.rel_time_ns[np.logical_and(
+            self.abs_time_s > self.bckg_start_t_s,
+            self.abs_time_s < self.end_t_s
         )]
         self.filt_abs_time_s = self.abs_time_s[np.logical_and(
             self.abs_time_s > self.start_t_s,
             self.abs_time_s < np.min((self.end_t_s, self.emitter_stop_t_s))
         )]
-        self.photons_tokeep = len(self.filt_abs_time_s)
-        print(f"The molecule emitted {self.photons_tokeep} photons in the relevant part of the measurement")
-        self.avg_emittercounts = self.photons_tokeep / (self.emitter_stop_t_s - self.start_t_s)
-        self.avg_bckg = (len(self.abs_time_s[np.logical_and(
+        self.bckg_abs_time_s = self.abs_time_s[np.logical_and(
                 self.abs_time_s > self.bckg_start_t_s,
                 self.abs_time_s < self.end_t_s
-            )]) / (self.end_t_s - self.bckg_start_t_s))
-        self.sbr = self.avg_emittercounts / self.avg_bckg - 1
-        print(f"Average signal counts: {self.avg_emittercounts - self.avg_bckg} Hz")
-        print(f"Average background counts: {self.avg_bckg} Hz")
-        print(f"SBR: {self.sbr}")
+        )]
+        self.photons_tokeep = len(self.filt_abs_time_s)
+        print(f"The molecule emitted {self.photons_tokeep} photons in the relevant part of the measurement")
+        self.avg_emitter_counts = self.photons_tokeep / (self.emitter_stop_t_s - self.start_t_s)
+        self.avg_bckg_counts = (len(self.bckg_abs_time_s) / (self.end_t_s - self.bckg_start_t_s))
+        self.avg_sbr = self.avg_emitter_counts / self.avg_bckg_counts - 1
+        print("*****************************")
+        print("Measure parameters before TCSPC timegating and considering all pulses:")
+        print(f"Average signal counts: {self.avg_emitter_counts - self.avg_bckg_counts} Hz")
+        print(f"Average background counts: {self.avg_bckg_counts} Hz")
+        print(f"Average SBR for all pulses: {self.avg_sbr}")
+        print("*****************************")
+        
+    def shift_and_plot_tcspc_data(self):
+        """
+        This function plots the decay curves of the TCSPC data, with and without translation, and the time windows used for analysis.
+        """
+        # shift TCSPC data (filtered, unfiltered and background) to put first pulse close to 0
+        self.rel_time_shift_ns = (self.rel_time_ns - TCSPC_TIME_OFFSET_NS) % LASER_PERIOD_NS
+        self.filt_rel_time_shift_ns = (self.filt_rel_time_ns - TCSPC_TIME_OFFSET_NS) % LASER_PERIOD_NS
+        self.bckg_rel_time_shift_ns = (self.filt_rel_time_bckg_ns - TCSPC_TIME_OFFSET_NS) % LASER_PERIOD_NS
+        
+        plt.figure('Emitter TCSPC Histogram')
+        plt.hist(self.filt_rel_time_shift_ns, bins = 300, range=(0,50), label='arrival time (shifted)', alpha=0.7)
+        for tau in τ:
+            plt.axvline(tau, color='red', linestyle='--')
+            plt.axvspan(tau + LIFETIME_WIN_BEG_NS, tau + LIFETIME_WIN_END_NS, color='red', alpha=0.2)
+        plt.xlabel('Time [ns]')
+        plt.ylabel('Counts')
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+        
+        plt.figure('Background TCSPC Histogram')
+        plt.hist(self.bckg_rel_time_shift_ns, bins = 300, range=(0,50), label= 'arrival time (shifted)', alpha=0.7)
+        for tau in τ:
+            plt.axvline(tau, color='red', linestyle='--')
+            plt.axvspan(tau + LIFETIME_WIN_BEG_NS, tau + LIFETIME_WIN_END_NS, color='red', alpha=0.2)
+        plt.xlabel('Time [ns]')
+        plt.ylabel('Counts')
+        plt.legend()
+        plt.tight_layout()
+        plt.show()
+        
+    def prep_ph_foranalysis(self):
+        """
+        This function prepares, for each pulse, an array of absolute times keeping only the photons in the TCSPC timegating window
+        which will be used for analysis. Also, it computes the corrected background counts and sbr, for each pulse and using this timegating
+        """
+        self.abs_time_s_foranalysis_perpulse = []
+        self.emitter_counts_perpulse = []
+        self.bckg_counts_perpulse = []
+        self.sbr_perpulse = []
+        for pulse_idx in range(NUM_PULSE):
+            # computing start and end of the time window used for timegating for the current pulse
+            start_win = τ[pulse_idx] + LIFETIME_WIN_BEG_NS
+            end_win = τ[pulse_idx] + LIFETIME_WIN_END_NS
+            # selecting all the photons used for analysis for the current pulse
+            abs_time_s_foranalysis = self.filt_abs_time_s[
+                np.logical_and(
+                    self.filt_rel_time_shift_ns > start_win,
+                    self.filt_rel_time_shift_ns < end_win,
+                )
+            ]
+            # appending (important: a deepcopy!) of the obtained array to the list
+            self.abs_time_s_foranalysis_perpulse.append(copy.deepcopy(abs_time_s_foranalysis))
+            # now doing the same with the background to get the correct background counts
+            bckg_counts_timegated = len(self.bckg_abs_time_s[
+                np.logical_and(
+                    self.bckg_rel_time_shift_ns > start_win,
+                    self.bckg_rel_time_shift_ns < end_win,
+                )
+            ]) / (self.end_t_s - self.bckg_start_t_s)
+            self.bckg_counts_perpulse.append(bckg_counts_timegated)
+            self.emitter_counts_perpulse.append(
+                len(abs_time_s_foranalysis) / (self.emitter_stop_t_s - self.start_t_s) - bckg_counts_timegated
+            )
+            self.sbr_perpulse.append(self.emitter_counts_perpulse[pulse_idx] / self.bckg_counts_perpulse[pulse_idx])
+            
+        print("*****************************")
+        print("Measure parameters after TCSPC timegating and per pulse:")
+        for pulse_idx in range(NUM_PULSE):
+            print(f"Signal counts for pulse {pulse_idx}: {self.emitter_counts_perpulse[pulse_idx]} Hz")
+            print(f"Background counts for pulse {pulse_idx}: {self.bckg_counts_perpulse[pulse_idx]} Hz")
+            print(f"SBR  for pulse {pulse_idx}: {self.sbr_perpulse[pulse_idx]}")
+        print("*****************************")
+   
         
     def plot_crb(self):
         """
         This function computes the crb based on the sbr we just computed and the time binning used for the time trace
         """
         # CRB Calculation and Plot
-        σ_CRB = tools.crb_minflux(K, self.ebp.psf_fits, np.mean(self.sbr), STEP_NM, self.ebp.size_nm, np.mean(self.avg_emittercounts), method='1')
+        σ_CRB = tools.crb_minflux(NUM_PULSE, self.ebp.psf_fits, np.mean(self.avg_sbr), STEP_NM, self.ebp.size_nm, np.mean(self.avg_emitter_counts), method='1')
 
         # Create the CRB plot with the same extent as the scatter plots
         plt.figure('CRB_map')
@@ -250,21 +329,9 @@ class TCSPCData():
 if __name__ == "__main__":
     # Open fitted experimental PSFs
     ebp = EBP(psf_dir)
-    tcspc_data = TCSPCData(ebp, tcspc_file, timetrace_bin_width_s)
- 
+    tcspc_data = TCSPCData(ebp, tcspc_file, timetrace_bin_width_s, τ)
 
-plt.figure('Histogram rel_time')
-plt.hist([rel_time, rel_time_new], bins = 300, range=(0,50), label= ['rel_time','rel_time_new'], alpha=0.7)
-for tau in τ:
-    plt.axvline(tau, color='red', linestyle='--')
-    plt.axvspan(tau + LIFETIME_WIN_BEG, tau + LIFETIME_WIN_END, color='red', alpha=0.2)
-
-plt.xlabel('Time [ns]')
-plt.ylabel('Counts')
-plt.legend()
-plt.tight_layout()
-plt.show()
-#%% Estimate Positions
+# Estimate Positions
 counts_each_bin = float(input("Ingresa counts totales por bin: "))
 counts_bkg_each_bin = float(input("Ingresa counts de bkg por bin: "))
 
@@ -283,7 +350,7 @@ r0_est_nm, N, SBR = np.zeros((2, nbins)), np.zeros(nbins), np.zeros(nbins)
 for i in range(nbins):
     window = rel_time_new[i * bin_size:(i + 1) * bin_size]
     SBR[i] = len(window) / (locs_t_binning_s * background_rate)
-    n_array = tools.n_minflux(τ, window, LIFETIME_WIN_BEG, LIFETIME_WIN_END)
+    n_array = tools.n_minflux(τ, window, LIFETIME_WIN_BEG_NS, LIFETIME_WIN_END_NS)
     N[i] = np.sum(n_array)
     _, r0_est_nm[:, i], _ = tools.pos_minflux(n_array, psf_fit_arr, SBR[i], STEP_NM) #Already in nm, check pos_minflux
 print(f"<N> = {np.round(np.mean(N),0)}")
