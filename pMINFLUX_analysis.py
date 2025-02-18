@@ -215,6 +215,9 @@ class TCSPCData():
         print(f"SBR: {self.sbr}")
         
     def plot_crb(self):
+        """
+        This function computes the crb based on the sbr we just computed and the time binning used for the time trace
+        """
         # CRB Calculation and Plot
         σ_CRB = tools.crb_minflux(K, self.ebp.psf_fits, np.mean(self.sbr), step_nm, self.ebp.size_nm, np.mean(self.avg_emittercounts), method='1')
 
