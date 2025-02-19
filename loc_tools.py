@@ -8,7 +8,7 @@ def indexToSpace(index, size_nm, px_nm):
     space = np.zeros(2)
     space[0] = index[1]*px_nm - size_nm/2
     space[1] = size_nm/2 - index[0]*px_nm
-    return space
+    return np.array(space)
 
 def likelihood(NUM_PULSES, PSF, n, λb, pos_nm, step_nm, size_nm):
     
@@ -123,13 +123,13 @@ def loc_trace_minflux(ph_perloc_perpulse, bckg_ph_perloc_perpulse, psfs, step_nm
     psf_norm = np.sum(psfs, axis = 0)
     normed_psfs = psfs / psf_norm
     n_loc = len(ph_perloc_perpulse[0,:])
-    locs = np.empty((n_loc, 2), dtype=float)
+    tot_bckg_ph_inloc = np.sum(bckg_ph_perloc_perpulse)
     bckg_contrib = np.empty(NUM_PULSES, dtype=float)
+    bckg_contrib = bckg_ph_perloc_perpulse / tot_bckg_ph_inloc
+    locs = np.empty((n_loc, 2), dtype=float)
     for loc_idx in range(n_loc):
-        tot_bckg_ph_inloc = np.sum(bckg_ph_perloc_perpulse)
         sbr = np.sum(ph_perloc_perpulse[:, loc_idx]) / tot_bckg_ph_inloc - 1
-        bckg_contrib = bckg_ph_perloc_perpulse / tot_bckg_ph_inloc
-        locs[loc_idx] = pos_minflux(ph_perloc_perpulse[:, loc_idx], normed_psfs, sbr, bckg_contrib, step_nm)
+        locs[loc_idx, :] = pos_minflux(ph_perloc_perpulse[:, loc_idx], normed_psfs, sbr, bckg_contrib, step_nm)
     return locs
 
 def crb_minflux(NUM_PULSES, PSF, SBR, px_nm, size_nm, N, method='1'):

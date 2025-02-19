@@ -44,15 +44,18 @@ from configvar import (
     LIFETIME_WIN_BEG_NS,
     LIFETIME_WIN_END_NS,
     PSF_DIR_BASE,
-    DATA_DIR_BASE
+    DATA_DIR_BASE,
+    LOCS_FILE_SUFFIX
 )
 
 plt.close('all')
 
 
 date = '20250214'
+tcspc_filename = 'clock_20250214-152357_.npy'
 psf_dir = PSF_DIR_BASE / date
-tcspc_file = DATA_DIR_BASE / date / 'clock_20250214-152357_.npy'
+data_dir = DATA_DIR_BASE / date
+tcspc_file = data_dir / tcspc_filename
 τ = np.array([0.98, 13.8, 26.12, 39.1])  # [ns] 
 timetrace_bin_width_s = 0.1
 target_n_ph = 1000
@@ -134,11 +137,14 @@ class TCSPCData():
         self.tcspc_data_path = tcspc_data_path
         self.timetrace_bin_width_s = timetrace_bin_width_s
         self.τ = τ
-        
+        # get folder and filename of the tcspc data file
+        self.tcspc_data_dir = self.tcspc_data_path.parent
+        self.tcspc_data_filename = self.tcspc_data_path.stem
+        # get tcspc data
         self.abs_time_s, self.rel_time_ps = self.load_tcspc_data()
         self.rel_time_ns = self.rel_time_ps * 1e-3
         self.tot_t_measuring_s = (self.abs_time_s.max() - self.abs_time_s.min())
-        
+        # process and show data
         self.plot_timetrace()
         self.filter_time_data()
         self.shift_and_plot_tcspc_data()
@@ -211,9 +217,9 @@ class TCSPCData():
         self.bckg_abs_time_s = self.abs_time_s[self.abs_time_s > self.bckg_start_t_s]
         self.photons_tokeep = len(self.filt_abs_time_s)
         
-        print(f"The molecule emitted {self.photons_tokeep} photons in the relevant part of the measurement")
+        print(f"Total number of detected photons in the relevant part of the measurement: {self.photons_tokeep}")
         self.avg_bckg_counts = (len(self.bckg_abs_time_s) / (self.tot_t_measuring_s - self.bckg_start_t_s))
-        self.avg_emitter_counts = self.photons_tokeep / (self.emitter_stop_t_s - self.start_t_s) - self.avg_bckg_counts
+        self.avg_emitter_counts = self.photons_tokeep / (np.min((self.end_t_s, self.emitter_stop_t_s)) - self.start_t_s) - self.avg_bckg_counts
         self.avg_sbr_notimegating = self.avg_emitter_counts / self.avg_bckg_counts
         print("*****************************")
         print("Measure parameters before TCSPC timegating:")
@@ -273,7 +279,7 @@ class TCSPCData():
                     self.filt_rel_time_shift_ns < end_win,
                 )
             ]
-            self.tot_counts_timegated += len(abs_time_s_foranalysis) / (self.emitter_stop_t_s - self.start_t_s)
+            self.tot_counts_timegated += len(abs_time_s_foranalysis) / (np.min((self.end_t_s, self.emitter_stop_t_s)) - self.start_t_s)
             # appending (important: a deepcopy!) of the obtained array to the list
             self.abs_time_s_foranalysis_perpulse.append(copy.deepcopy(abs_time_s_foranalysis))
             # now doing the same with the background to get the correct background counts
@@ -305,7 +311,7 @@ class MINFLUXAnalysis():
         self.plot_crb()
         self.calc_ph_perloc_perpulse()
         self.localizations = self.minflux_localize()
-        self.plot_locs()
+        self.save_locs()
         
     def choose_locs_t_binning(self):
         """
@@ -328,6 +334,7 @@ class MINFLUXAnalysis():
         """
         # compute histograms of photons for each pulse using the chosen time binning
         self.locs_bin_edges = np.arange(self.tcspc_data.start_t_s, self.tcspc_data.emitter_stop_t_s, self.locs_t_binning_s)
+        print(f"Total number of localizations: {len(self.locs_bin_edges) - 1}")
         self.ph_perloc_perpulse = np.empty((NUM_PULSES, len(self.locs_bin_edges) - 1), dtype=int)
         for pulse_idx in range(NUM_PULSES):
             self.ph_perloc_perpulse[pulse_idx, :], _ = np.histogram(self.tcspc_data.abs_time_s_foranalysis_perpulse[pulse_idx], self.locs_bin_edges)
@@ -361,67 +368,68 @@ class MINFLUXAnalysis():
         """
         This function calls numba optimized functions to compute MINFLUX localizations for the selected part of the trace
         """
-        return loc_trace_minflux(self.ph_perloc_perpulse, self.bckg_ph_perloc_perpulse, self.ebp.psf_fits, STEP_NM)
+        locs_coords = loc_trace_minflux(self.ph_perloc_perpulse, self.bckg_ph_perloc_perpulse, self.ebp.psf_fits, STEP_NM)
+        return np.concatenate((self.locs_bin_edges[:-1].reshape(-1,1), locs_coords), axis=1)
        
     def save_locs(self):
-        pass
+        """
+        This function save the localizations as a .npy file, to be accessed and used for post-processing
+        """
+        self.locs_results_filename = self.tcspc_data.tcspc_data_filename + LOCS_FILE_SUFFIX + str(int(self.locs_t_binning_s * 1e3)) + 'ms_binning.npy'
+        self.locs_results_filepath = self.tcspc_data.tcspc_data_dir / self.locs_results_filename
+        np.save(self.locs_results_filepath, self.localizations)
+
+class DataPostProcessor():
+    def __init__(self, locs_filepath: Path, ebp: EBP):
+        self.locs_filepath = locs_filepath
+        self.ebp = ebp
+        self.load_locs()
+        self.plot_locs_timecoded()
         
-    def plot_locs(self):
-        plt.scatter(self.localizations[:,0], self.localizations[:,1])
+    def load_locs(self):
+        """
+        This function loads the localization array saved as a .npy
+        """
+        self.locs = np.load(self.locs_filepath)
+        
+    def plot_locs_timecoded(self):
+        """
+        This function draws plots to show the results of the lcalizations analysis
+        """
+        plt.figure('Localizations')
+        for beam_idx, min_pos in enumerate(self.ebp.pos_mins):
+            plt.scatter(*(min_pos - self.ebp.pos_mins[0]), color=self.ebp.psf_colors[beam_idx], s=100)
+        plt.scatter(self.locs[:,1] - self.ebp.pos_mins[0][0], self.locs[:,2] - self.ebp.pos_mins[0][1], c=range(len(self.locs[:,0])), cmap='rainbow', s=20, alpha=0.2)
+        # Annotations
+        plt.gca().set_aspect('equal'), plt.xlabel('x (nm)'), plt.ylabel('y (nm)'), plt.tight_layout()
         plt.show()
 
 if __name__ == "__main__":
     # Open fitted experimental PSFs
     ebp = EBP(psf_dir)
-    tcspc_data = TCSPCData(tcspc_file, timetrace_bin_width_s, τ)
-    minflux_analysis = MINFLUXAnalysis(ebp, tcspc_data, target_n_ph)
-
-# Estimate Positions
-counts_each_bin = float(input("Ingresa counts totales por bin: "))
-counts_bkg_each_bin = float(input("Ingresa counts de bkg por bin: "))
-
-background_rate = counts_bkg_each_bin//time_each_bin #Hz
-signal_rate = counts_each_bin/time_each_bin #Hz
-locs_t_binning_s = 0.06 #[s]
-print("Signal_rate: ", signal_rate, "Hz")
-print("Background rate: ", background_rate, "Hz")
-print("SBR aprox: ", (signal_rate - background_rate)/background_rate)
-nbins = int(((abs_time.max()- abs_time.min())/1E12)// locs_t_binning_s)
-bin_size = len(rel_time_new)//nbins
-print("nbins: ", nbins)
-print('bin_size: ', bin_size)
-r0_est_nm, N, SBR = np.zeros((2, nbins)), np.zeros(nbins), np.zeros(nbins)
-
-for i in range(nbins):
-    window = rel_time_new[i * bin_size:(i + 1) * bin_size]
-    SBR[i] = len(window) / (locs_t_binning_s * background_rate)
-    n_array = tools.n_minflux(τ, window, LIFETIME_WIN_BEG_NS, LIFETIME_WIN_END_NS)
-    N[i] = np.sum(n_array)
-    _, r0_est_nm[:, i], _ = tools.pos_minflux(n_array, psf_fit_arr, SBR[i], STEP_NM) #Already in nm, check pos_minflux
-print(f"<N> = {np.round(np.mean(N),0)}")
-x_loc, y_loc = r0_est_nm[0] - pos_min_arr[0][0], r0_est_nm[1] - pos_min_arr[0][1] #Le resto esto porque es la referencia alrededor de la que quiero dibujar.
-meanx, meany = np.mean(x_loc), np.mean(y_loc)
-sigmax, sigmay = np.std(x_loc), np.std(y_loc)
+    # look for pre-existing result files
+    locs_filepath_list = []
+    for filepath in natsorted(data_dir.iterdir()):
+        if filepath.is_file():
+            if (tcspc_filename.split('.')[0] in filepath.name) and (LOCS_FILE_SUFFIX in filepath.name):
+                locs_filepath_list.append(filepath)
+    if not locs_filepath_list:
+        print("No existing result files found. Executing full analysis.")
+        # execute full analysis if no previous result file is found
+        tcspc_data = TCSPCData(tcspc_file, timetrace_bin_width_s, τ)
+        minflux_analysis = MINFLUXAnalysis(ebp, tcspc_data, target_n_ph)
+        locs_filepath_list.append(minflux_analysis.locs_results_filepath)
+        result_filenumber_chosen = 0
+    else:
+        print("Result files found:")
+        for filenumber, filepath in enumerate(locs_filepath_list):
+            print(f"{filenumber}. {filepath.name}")
+        result_filenumber_chosen = int(input("Insert number of the result file to be used: "))
+    postproc = DataPostProcessor(locs_filepath_list[result_filenumber_chosen], ebp)
+    
+    
 #%% Localizations
-plt.figure('Localizations')
-for i, p in enumerate(pos_min_arr):
-    plt.scatter(*(p - pos_min_arr[0]), color=colors[i], s=100)
-plt.scatter(x_loc, y_loc, c='gray', s=20, alpha=0.25)
-plt.scatter(np.mean(x_loc), np.mean(y_loc), color='black', marker='+')
-# Annotations
-plt.annotate(f'<x> = {meanx:.2f} nm', xy=(0.05, 0.80), xycoords='axes fraction', fontsize=8, color='blue', verticalalignment='top')
-plt.annotate(f'<y> = {meany:.2f} nm', xy=(0.05, 0.75), xycoords='axes fraction', fontsize=8, color='blue', verticalalignment='top')
-plt.annotate(f'σx = {sigmax:.2f} nm', xy=(0.05, 0.95), xycoords='axes fraction', fontsize=8, color='blue', verticalalignment='top')
-plt.annotate(f'σy = {sigmay:.2f} nm', xy=(0.05, 0.90), xycoords='axes fraction', fontsize=8, color='blue', verticalalignment='top')
-plt.gca().set_aspect('equal'), plt.xlabel('x (nm)'), plt.ylabel('y (nm)'), plt.tight_layout()
 
-# Scatter Plot with Time Encoding
-plt.figure('Localizations_time_encoding')
-for i, p in enumerate(pos_min_arr):
-    plt.scatter(*(p - pos_min_arr[0]), color=colors[i], s=100)
-plt.scatter(x_loc, y_loc, c=range(len(x_loc)), cmap='rainbow', s=20)
-plt.gca().set_aspect('equal'), plt.colorbar(label='Time encoding')
-plt.xlabel('x (nm)'), plt.ylabel('y (nm)'), plt.tight_layout()
 
 ax = plt.gca()
 ax.get_xlim()
