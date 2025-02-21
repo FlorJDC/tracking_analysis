@@ -34,8 +34,8 @@ from PIL import Image
 from natsort import natsorted
 from pathlib import Path
 from scipy.optimize import curve_fit
-from scipy.stats import gaussian_kde
 from hmmlearn.hmm import GaussianHMM
+from sklearn.mixture import GaussianMixture
 from loc_tools import indexToSpace, crb_minflux, loc_trace_minflux
 from configvar import (
     TCSPC_TIME_OFFSET_NS,
@@ -67,6 +67,12 @@ target_n_ph = 1000
 
 def gauss(x, a, mu, sigma):
     return a * np.exp(-((x - mu) ** 2) / (2 * sigma ** 2))
+
+def bi_gaussian(coords, A1, x1, y1, sx1, sy1, A2, x2, y2, sx2, sy2):
+    x, y = coords
+    g1 = A1 * np.exp(-((x - x1) ** 2) / (2 * sx1 ** 2) - ((y - y1) ** 2) / (2 * sy1 ** 2))
+    g2 = A2 * np.exp(-((x - x2) ** 2) / (2 * sx2 ** 2) - ((y - y2) ** 2) / (2 * sy2 ** 2))
+    return g1 + g2
 
 class EBP():
     def __init__(self, psf_dir: Path):
@@ -596,14 +602,22 @@ class DataPostProcessor():
         plt.show()
         
 class ClockOrigamiAnalysis():
-    def __init__(self, post_proc_data: DataPostProcessor):
+    def __init__(self, post_proc_data: DataPostProcessor, locs_filepath: Path, tcspc_data_dir: Path):
         self.post_proc_data = post_proc_data
+        self.locs_filepath = locs_filepath
+        self.tcspc_data_dir = tcspc_data_dir
         self.x_plot_range, self.y_plot_range = self.post_proc_data.get_glob_plots_limits(self.post_proc_data.locs_centered)
         self.center_of_locs, self.locs_zeroavg = self.recenter_locs(self.post_proc_data.locs_centered)
         self.fit_andplot_clockaxis(self.post_proc_data.locs_centered)
         self.locs_zeroavg_rotated = self.rotate_locs(self.locs_zeroavg, self.axis_slope)
         self.plot_loc_trace(self.locs_zeroavg_rotated)
-        self.hmm_fit(self.locs_zeroavg_rotated)
+        self.hidden_states, self.hidden_states_rescaled = self.hmm_fit(self.locs_zeroavg_rotated)
+        self.locs_hmmfilt = self.hmm_filter(self.post_proc_data.locs_centered, self.hidden_states)
+        # repeat fits with HMM-filtered data
+        self.post_proc_data.plot_locs_withcrb(self.locs_hmmfilt)
+        self.post_proc_data.plot_loc_density_withebp(self.locs_hmmfilt)
+        # fit clouds of points
+        self.fit_clock_clouds(self.locs_hmmfilt)
 
     def recenter_locs(self, locs):
         """
@@ -669,26 +683,69 @@ class ClockOrigamiAnalysis():
         plt.show()
         
     def hmm_fit(self, locs):
+        """
+        This function implements a basic HMM fit of the time trace and plots the rescaled prediciton for the hidden states
+        """
         model = GaussianHMM(n_components=2, covariance_type="full", n_iter=1000)
         model.fit(locs[:, 1].reshape(-1, 1))
         hidden_states = model.predict(locs[:, 1].reshape(-1, 1))
-        print(hidden_states)
         locs_statezero = locs[hidden_states == 0]
         locs_stateone = locs[hidden_states == 1]
-        avg_statezero = np.mean(locs_statezero[:, 1])
-        avg_stateone = np.mean(locs_stateone[:, 1])
-        downstate_idx = np.argmin((avg_statezero, avg_stateone))
+        self.avg_statezero = np.mean(locs_statezero[:, 1])
+        self.avg_stateone = np.mean(locs_stateone[:, 1])
+        downstate_idx = np.argmin((self.avg_statezero, self.avg_stateone))
         if downstate_idx == 0:    
-            hidden_states_rescaled = hidden_states * abs(avg_stateone - avg_statezero) + np.min((avg_stateone, avg_statezero))
+            hidden_states_rescaled = hidden_states * abs(self.avg_stateone - self.avg_statezero) + np.min((self.avg_stateone, self.avg_statezero))
         else:
-            hidden_states_rescaled = (1 - hidden_states) * abs(avg_stateone - avg_statezero) + np.min((avg_stateone, avg_statezero))
-        print(hidden_states_rescaled)
+            hidden_states_rescaled = (1 - hidden_states) * abs(self.avg_stateone - self.avg_statezero) + np.min((self.avg_stateone, self.avg_statezero))
         plt.figure(figsize=(12, 6))
         plt.plot(locs[:, 1], label="Localization Trace")
         plt.plot(hidden_states_rescaled, label="Predicted Hidden States", linestyle='--', color='red')
         plt.legend()
         plt.show()
+        return hidden_states, hidden_states_rescaled
         
+    def hmm_filter(self, locs, hidden_states):
+        """
+        This function finds all hidden state transitions and filters data based on this, throwing all
+        localizations right before and right after a jump
+        """
+        locs_beforefilt = len(locs)
+        locs_hmmfilt = locs[:-1][
+            np.logical_and(
+                np.isclose(np.diff(hidden_states), 0, atol=1e-6),
+                np.isclose(np.diff(np.concatenate([hidden_states[:1], hidden_states[:-1]])), 0, atol=1e-6)
+            )
+        ] 
+        locs_afterfilt = len(locs_hmmfilt)
+        print(f"HMM filtering discarded {locs_beforefilt - locs_afterfilt} localizations")
+        print(f"{locs_afterfilt} localizations remaining ({int(locs_afterfilt / locs_beforefilt * 100)}%)")
+        
+        self.locs_hmmfilts_filename = self.locs_filepath.stem + '_HMMfilt.npy'
+        self.locs_hmmfilts_filepath = self.tcspc_data_dir / self.locs_hmmfilts_filename
+        np.save(self.locs_hmmfilts_filepath, locs_hmmfilt)
+        return locs_hmmfilt
+    
+    def fit_clock_clouds(self, locs):
+        """
+        This function uses a clustering algorithm to fit the two clouds of points of the clock
+        """
+        gmm = GaussianMixture(n_components=2, covariance_type='full')
+        gmm.fit(locs[:, 1:3])  # Fit on (x, y) coordinates
+
+        # Extract means and covariances
+        means = gmm.means_  # Shape (2, 2), centers of the Gaussians
+        covariances = gmm.covariances_  # Shape (2, 2, 2), full covariance matrices
+
+        # Compute standard deviations (σ) from covariance matrix
+        sigmas = np.sqrt(np.array([np.diag(cov) for cov in covariances]))
+        for gauss_idx in range(2):
+            print(f"Cloud number {gauss_idx}:")
+            print(f"Center: {means[gauss_idx]}")
+            print(f"Sigma: {sigmas[gauss_idx]}")
+            
+        print(f"Estimated clock origami size: {np.sqrt((means[0][0] - means[1][0])**2 + (means[0][1] - means[1][1])**2)}")
+            
 
 if __name__ == "__main__":
     # Open fitted experimental PSFs
@@ -719,5 +776,5 @@ if __name__ == "__main__":
     postproc = DataPostProcessor(locs_filepath_list[result_filenumber_chosen], ebp, locs_dens_hist_bin_size)
     clock_analysis_choice = input("Do you want to perform the analysis for the clock origami? (y/n) ")
     if clock_analysis_choice == 'y':
-        clock_analysis = ClockOrigamiAnalysis(postproc)
+        clock_analysis = ClockOrigamiAnalysis(postproc, locs_filepath_list[result_filenumber_chosen], data_dir)
 
