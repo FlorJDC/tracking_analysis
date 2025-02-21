@@ -62,10 +62,9 @@ def spaceToIndex(space, size_nm, px_nm):
 def indexToSpace(index, size_nm, px_nm):
 
     space = np.zeros(2)
-    # -size_nm/2 puts the center of the coordinate system in the center of the image
-    # coordinates must be inverted as the first index is the row index but the first coordinate is the horizontal one
-    space[0] = index[1]*px_nm - size_nm/2 
-    space[1] = size_nm/2 - index[0]*px_nm
+    space[0] = index[1]*px_nm - size_nm/2 # -size_nm/2 desplaza el origen de las coordenadas al centro de la imagen (en lugar de estar en la esquina superior izquierda).
+    space[1] = size_nm/2 - index[0]*px_nm #Desplaza al centro de la imagen pero quisiera que pueda pasar no solo al centro de la imagen sino al centro de la dona cero
+    #size_nm / 2 - # invierte el eje vertical, porque los índices de la matriz comienzan en la parte superior izquierda (donde las filas aumentan hacia abajo), mientras que en un gráfico cartesiano el eje y aumenta hacia arriba.
     return np.array(space)
 
 

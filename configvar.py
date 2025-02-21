@@ -7,5 +7,6 @@ STEP_NM = 1
 LIFETIME_WIN_BEG_NS = 0
 LIFETIME_WIN_END_NS = 5
 PSF_DIR_BASE = Path('testdata') / 'psf'
-DATA_DIR_BASE = Path('testdata') / 'clock'
+DATA_DIR_BASE = Path('testdata') / 'measurement'
 LOCS_FILE_SUFFIX = "_locs_"
+SIGMA_TOL_OUTLIERS = 3.0

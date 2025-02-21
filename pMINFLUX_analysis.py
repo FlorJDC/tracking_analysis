@@ -45,7 +45,8 @@ from configvar import (
     LIFETIME_WIN_END_NS,
     PSF_DIR_BASE,
     DATA_DIR_BASE,
-    LOCS_FILE_SUFFIX
+    LOCS_FILE_SUFFIX,
+    SIGMA_TOL_OUTLIERS
 )
 
 plt.close('all')
@@ -53,9 +54,12 @@ plt.close('all')
 
 date = '20250214'
 tcspc_filename = 'clock_20250214-152357_.npy'
+#tcspc_filename = 'medicion_cente0_psf_fit_and_move_20250219-111915_.npy'
+bckg_filename = ''
 psf_dir = PSF_DIR_BASE / date
 data_dir = DATA_DIR_BASE / date
 tcspc_file = data_dir / tcspc_filename
+bckg_file = data_dir / bckg_filename
 τ = np.array([0.98, 13.8, 26.12, 39.1])  # [ns] 
 timetrace_bin_width_s = 0.1
 target_n_ph = 1000
@@ -67,7 +71,7 @@ class EBP():
     def __init__(self, psf_dir: Path):
         self.psf_dir = psf_dir
         self.psf_colors = ['blue', 'orange', 'gray', 'yellow']
-        self.psf_fits, self.pos_mins, self.pos_mins_centered = self.open_psf()
+        self.psf_fits, self.pos_mins_nm, self.pos_mins_centered_nm = self.open_psf()
         self.plot_psf()
 
     def open_psf(self):
@@ -76,8 +80,7 @@ class EBP():
         files, which should contain the numpy arrays of the experimental PSFs, and loads them
         """
         psf_fit_list = []
-        pos_min_list = []
-        pos_min_centered_list = []
+        pos_min_nm_list = []
         for filepath in natsorted(self.psf_dir.iterdir()):
             if filepath.is_file():
                 if filepath.suffix == '.npy':
@@ -85,23 +88,21 @@ class EBP():
                     psf_fit_list.append(psf_fit)
                     psf_size = np.shape(psf_fit)[1]
                     self.size_nm = psf_size * STEP_NM
-                    min_coords_fit_px = np.unravel_index(np.argmin(psf_fit, axis=None), psf_fit.shape)
-                    min_coords_fit_px = (
-                        min_coords_fit_px[1],
-                        min_coords_fit_px[0]
+                    pos_min_nm = indexToSpace(
+                        np.unravel_index(np.argmin(psf_fit, axis=None),psf_fit.shape),
+                        self.size_nm,
+                        STEP_NM
                     )
-                    min_coords_fit_nm = (
-                        min_coords_fit_px[0] * STEP_NM,
-                        min_coords_fit_px[1] * STEP_NM
-                    )
-                    pos_min_list.append(min_coords_fit_nm)
-                    pos_min_centered_list.append(indexToSpace(min_coords_fit_px, self.size_nm, STEP_NM))
+                    pos_min_nm_list.append(pos_min_nm)
 
         psf_fit_arr = np.array(psf_fit_list)
-        pos_min_arr = np.array(pos_min_list)
-        pos_min_centered_arr = np.array(pos_min_list)
-        
-        return psf_fit_arr, pos_min_arr, pos_min_centered_arr
+        pos_min_nm_arr = np.array(pos_min_nm_list)
+        pos_min_nm_centered_arr = copy.deepcopy(pos_min_nm_arr)
+        for min_idx in range(len(pos_min_nm_centered_arr)):
+            pos_min_nm_centered_arr[min_idx][0] -= pos_min_nm_arr[0][0]
+            pos_min_nm_centered_arr[min_idx][1] -= pos_min_nm_arr[0][1]  
+            
+        return psf_fit_arr, pos_min_nm_arr, pos_min_nm_centered_arr
     
     def plot_psf(self):
         """
@@ -112,16 +113,16 @@ class EBP():
         for i, ax in enumerate(axes.flat):
             ax.set(xlabel = 'x (nm)', ylabel= 'y (nm)')
             ax.imshow(self.psf_fits[i], cmap='viridis', origin='lower')
-            ax.scatter(*self.pos_mins[i],
+            ax.scatter(*self.pos_mins_nm[i],
                         color=self.psf_colors[i], s=100)
             ax.set_title(f'Fitted PSF {i + 1}', fontsize=10)
         plt.tight_layout()
 
         #Plot EBP
-        x_min, y_min = self.pos_mins[:, 0], self.pos_mins[:, 1]
+        x_min, y_min = self.pos_mins_centered_nm[:, 0], self.pos_mins_centered_nm[:, 1]
         plt.figure('EBP')
-        for i in range(len(self.pos_mins)):
-            plt.scatter(x_min[i]- self.pos_mins[0][0], y_min[i] - self.pos_mins[0][1], c=self.psf_colors[i], label=f'{i+1}')
+        for i in range(len(self.pos_mins_centered_nm)):
+            plt.scatter(x_min[i]- self.pos_mins_centered_nm[0][0], y_min[i] - self.pos_mins_centered_nm[0][1], c=self.psf_colors[i], label=f'{i+1}')
         plt.title('EBP')
         plt.xlabel('x (nm)')
         plt.ylabel('y (nm)')
@@ -133,33 +134,39 @@ class EBP():
         plt.show()
 
 class TCSPCData():
-    def __init__(self, tcspc_data_path: Path, timetrace_bin_width_s: float, τ: list):
+    def __init__(self, tcspc_data_path: Path, bckg_data_path: Path, timetrace_bin_width_s: float, τ: list):
         self.tcspc_data_path = tcspc_data_path
+        self.bckg_data_path = bckg_data_path
         self.timetrace_bin_width_s = timetrace_bin_width_s
         self.τ = τ
         # get folder and filename of the tcspc data file
         self.tcspc_data_dir = self.tcspc_data_path.parent
         self.tcspc_data_filename = self.tcspc_data_path.stem
-        # get tcspc data
-        self.abs_time_s, self.rel_time_ps = self.load_tcspc_data()
-        self.rel_time_ns = self.rel_time_ps * 1e-3
+        # load TCSPC data, plot timetrace and ask if there is a photobleaching step
+        self.abs_time_s, self.rel_time_ns = self.load_tcspc_data(self.tcspc_data_path)
         self.tot_t_measuring_s = (self.abs_time_s.max() - self.abs_time_s.min())
-        # process and show data
         self.plot_timetrace()
+        self.ask_analysis_type()
+        # if there is no photobleaching step, gets background data from separate file
+        if not self.is_single_mol:
+            self.bckg_abs_time_s, self.bckg_rel_time_ns = self.load_tcspc_data(self.bckg_data_path)
+            self.tot_t_measuring_bckg_s = (self.bckg_abs_time_s.max() - self.bckg_abs_time_s.min())
+        # process and show data
         self.filter_time_data()
         self.shift_and_plot_tcspc_data()
         self.prep_ph_foranalysis()
         
-    def load_tcspc_data(self):
+    def load_tcspc_data(self, data_path):
         """
         This function loads the TCSPC data from a .npy file, loading both the absolute and relative times
         of the events
         """
-        all_data = np.load(self.tcspc_data_path)
+        all_data = np.load(data_path)
         rel_time_ps = all_data[2,:]
         abs_time_ps_woffset = all_data[1,:]
         abs_time_s = (abs_time_ps_woffset - abs_time_ps_woffset.min()) / 1e12 # ps to s and eliminate offset
-        return abs_time_s, rel_time_ps
+        rel_time_ns = rel_time_ps * 1e-3
+        return abs_time_s, rel_time_ns
 
     def plot_timetrace(self):
         """
@@ -173,6 +180,17 @@ class TCSPCData():
         plt.title("Time trace")
         plt.tight_layout()
         plt.show()
+        
+    def ask_analysis_type(self):
+        """
+        This function asks the user whether the measurement presents a photobleaching step or not. If yes, the background will be extracted
+        from the measurement itself, after the photobleaching steps. Otherwise, a separate background file will be loaded.
+        """
+        is_there_photobleach = input("Does the measurement present a photobleaching step? (y/n) ")
+        if is_there_photobleach == 'y':
+            self.is_single_mol = True
+        else:
+            self.is_single_mol = False
         
     def filter_time_data(self):
         """
@@ -191,34 +209,42 @@ class TCSPCData():
             self.end_t_s = self.tot_t_measuring_s
         else:
             self.end_t_s = float(end_t_input)
-        int_threshold = float(input("Intensity threshold for signal in Hz: "))
-        
-        # find all the bin (left) edges where the molecule intensity is below the threshold
-        dark_bin_edges = self.raw_timetrace_bin_edges[:-1][self.raw_timetrace_counts_hz < int_threshold]
-        # compute times until two nearest dark bins. The n-th element is the time between the (n-1)-th and the n-th dark bin
-        t_tonext_dark_bin = np.concatenate(([dark_bin_edges[0]], np.diff(dark_bin_edges)))
-        # find the first bin of each dark period of the molecule
-        start_dark_time = dark_bin_edges[t_tonext_dark_bin > (self.timetrace_bin_width_s * 1.5)]
-        # the bleaching step is selected as the last time the molecule goes dark and never recovers
-        self.bleach_t_s = start_dark_time[-1]
-        print(f"Molecule photobleached after {self.bleach_t_s} s")
-        # here we compute the emitter and background counts and the estimated SBR
-        self.emitter_stop_t_s = self.bleach_t_s - self.timetrace_bin_width_s
-        self.bckg_start_t_s = self.bleach_t_s + self.timetrace_bin_width_s
+        # if it is a single molecule, asks for intensity threshold to identify the photobleaching step and filter data based on that
+        if self.is_single_mol:
+            int_threshold = float(input("Intensity threshold for signal in Hz: "))
+            # find all the bin (left) edges where the molecule intensity is below the threshold
+            dark_bin_edges = self.raw_timetrace_bin_edges[:-1][self.raw_timetrace_counts_hz < int_threshold]
+            # compute times until two nearest dark bins. The n-th element is the time between the (n-1)-th and the n-th dark bin
+            t_tonext_dark_bin = np.concatenate(([dark_bin_edges[0]], np.diff(dark_bin_edges)))
+            # find the first bin of each dark period of the molecule
+            start_dark_time = dark_bin_edges[t_tonext_dark_bin > (self.timetrace_bin_width_s * 1.5)]
+            # the bleaching step is selected as the last time the molecule goes dark and never recovers
+            self.bleach_t_s = start_dark_time[-1]
+            print(f"Molecule photobleached after {self.bleach_t_s} s")
+            self.emitter_stop_t_s = self.bleach_t_s - self.timetrace_bin_width_s
+            self.bckg_start_t_s = self.bleach_t_s + self.timetrace_bin_width_s
+            self.tot_t_measuring_bckg_s = self.tot_t_measuring_s - self.bckg_start_t_s
+        else: 
+            # if there is not photobleaching step, counts are considered until the end of the measurement
+            self.emitter_stop_t_s = self.tot_t_measuring_s
+            
+        # here filter the data based on the start and end time selected by the user
         self.filt_rel_time_ns = self.rel_time_ns[np.logical_and(
             self.abs_time_s > self.start_t_s,
             self.abs_time_s < np.min((self.end_t_s, self.emitter_stop_t_s))
         )]
-        self.bckg_rel_time_ns = self.rel_time_ns[self.abs_time_s > self.bckg_start_t_s]
         self.filt_abs_time_s = self.abs_time_s[np.logical_and(
             self.abs_time_s > self.start_t_s,
             self.abs_time_s < np.min((self.end_t_s, self.emitter_stop_t_s))
         )]
-        self.bckg_abs_time_s = self.abs_time_s[self.abs_time_s > self.bckg_start_t_s]
+        # only if it is a single molecule, gets the background counts from the measurement itself, after photobleaching
+        if self.is_single_mol:
+            self.bckg_rel_time_ns = self.rel_time_ns[self.abs_time_s > self.bckg_start_t_s]
+            self.bckg_abs_time_s = self.abs_time_s[self.abs_time_s > self.bckg_start_t_s]
         self.photons_tokeep = len(self.filt_abs_time_s)
         
         print(f"Total number of detected photons in the relevant part of the measurement: {self.photons_tokeep}")
-        self.avg_bckg_counts = (len(self.bckg_abs_time_s) / (self.tot_t_measuring_s - self.bckg_start_t_s))
+        self.avg_bckg_counts = len(self.bckg_abs_time_s) / self.tot_t_measuring_bckg_s
         self.avg_emitter_counts = self.photons_tokeep / (np.min((self.end_t_s, self.emitter_stop_t_s)) - self.start_t_s) - self.avg_bckg_counts
         self.avg_sbr_notimegating = self.avg_emitter_counts / self.avg_bckg_counts
         print("*****************************")
@@ -288,7 +314,7 @@ class TCSPCData():
                     self.bckg_rel_time_shift_ns > start_win,
                     self.bckg_rel_time_shift_ns < end_win,
                 )
-            ]) / (self.tot_t_measuring_s - self.bckg_start_t_s)
+            ]) / self.tot_t_measuring_bckg_s
         self.bckg_counts_timegated = np.sum(self.bckg_counts_timegated_perpulse)
         # total emitter photons used for analysis
         self.emitter_counts_timegated = self.tot_counts_timegated - self.bckg_counts_timegated
@@ -308,7 +334,6 @@ class MINFLUXAnalysis():
         self.tcspc_data = tcspc_data
         self.target_n_ph = target_n_ph
         self.choose_locs_t_binning()
-        self.plot_crb()
         self.calc_ph_perloc_perpulse()
         self.localizations = self.minflux_localize()
         self.save_locs()
@@ -326,11 +351,12 @@ class MINFLUXAnalysis():
         self.bckg_ph_perloc_perpulse = np.empty(NUM_PULSES, dtype=float)
         for pulse_idx in range(NUM_PULSES):
             self.bckg_ph_perloc_perpulse[pulse_idx] = self.tcspc_data.bckg_counts_timegated_perpulse[pulse_idx] * self.locs_t_binning_s
-            print(f"Expected photons per localization for pulse {pulse_idx + 1}: {self.bckg_ph_perloc_perpulse[pulse_idx]}")
+            print(f"Expected background photons per localization for pulse {pulse_idx + 1}: {self.bckg_ph_perloc_perpulse[pulse_idx]}")
         
     def calc_ph_perloc_perpulse(self):
         """
-        This function computes the histograms of the counts for each localization bin and for all pulses separately
+        This function computes the histograms of the counts for each localization bin and for all pulses separately and
+        alltogether, and the SBR for each localization
         """
         # compute histograms of photons for each pulse using the chosen time binning
         self.locs_bin_edges = np.arange(self.tcspc_data.start_t_s, self.tcspc_data.emitter_stop_t_s, self.locs_t_binning_s)
@@ -338,38 +364,22 @@ class MINFLUXAnalysis():
         self.ph_perloc_perpulse = np.empty((NUM_PULSES, len(self.locs_bin_edges) - 1), dtype=int)
         for pulse_idx in range(NUM_PULSES):
             self.ph_perloc_perpulse[pulse_idx, :], _ = np.histogram(self.tcspc_data.abs_time_s_foranalysis_perpulse[pulse_idx], self.locs_bin_edges)
-        
-    def plot_crb(self):
-        """
-        This function computes the crb based on the sbr we just computed and the time binning used for the time trace
-        """
-        # CRB Calculation and Plot
-        σ_CRB = crb_minflux(NUM_PULSES, self.ebp.psf_fits, self.tcspc_data.sbr_timegated, STEP_NM, self.ebp.size_nm, self.avg_n_ph_perloc, method='1')
-
-        # Create the CRB plot with the same extent as the scatter plots
-        plt.figure('CRB_map')
-        plt.imshow(σ_CRB, cmap='viridis', vmin=0, vmax=20)
-        plt.colorbar(label='σ_CRB Value')
-
-        # Plot PSF minima positions with the same color mapping as before
-        for i, p in enumerate(self.ebp.pos_mins):
-            plt.scatter(*np.unravel_index(np.argmin(self.ebp.psf_fits[i]), self.ebp.psf_fits[i].shape)[::-1], 
-                        color=self.ebp.psf_colors[i], s=100)
-
-        # Ensure the axes and aspect ratio are the same as in scatter plots
-        plt.gca().set_aspect('equal')
-        plt.xlabel('x (nm)')
-        plt.ylabel('y (nm)')
-        plt.title('σ_CRB with Aligned Reference Frame')
-        plt.tight_layout()
-        plt.show()
+        self.ph_perloc_allpulses = np.sum(self.ph_perloc_perpulse, axis=0)
+        # Now compute the SBR for each individual localization by dividing the number of photons of each bin for the expected number of background
+        # photons in the same time interval
+        self.sbr_perloc = copy.deepcopy(self.ph_perloc_allpulses) / np.sum(self.bckg_ph_perloc_perpulse) - 1
         
     def minflux_localize(self):
         """
         This function calls numba optimized functions to compute MINFLUX localizations for the selected part of the trace
         """
-        locs_coords = loc_trace_minflux(self.ph_perloc_perpulse, self.bckg_ph_perloc_perpulse, self.ebp.psf_fits, STEP_NM)
-        return np.concatenate((self.locs_bin_edges[:-1].reshape(-1,1), locs_coords), axis=1)
+        locs_coords = loc_trace_minflux(self.ph_perloc_perpulse, self.bckg_ph_perloc_perpulse, self.sbr_perloc, self.ebp.psf_fits, STEP_NM)
+        return np.concatenate((
+                self.locs_bin_edges[:-1].reshape(-1,1),
+                locs_coords,
+                self.ph_perloc_allpulses.reshape(-1,1), 
+                self.sbr_perloc.reshape(-1,1)
+            ), axis=1)
        
     def save_locs(self):
         """
@@ -380,29 +390,168 @@ class MINFLUXAnalysis():
         np.save(self.locs_results_filepath, self.localizations)
 
 class DataPostProcessor():
-    def __init__(self, locs_filepath: Path, ebp: EBP):
+    def __init__(self, locs_filepath: Path, ebp: EBP, bin_size: int):
         self.locs_filepath = locs_filepath
         self.ebp = ebp
-        self.load_locs()
-        self.plot_locs_timecoded()
+        self.bin_size = bin_size
         
-    def load_locs(self):
+        # open file containing localization results
+        self.locs = self.load_locs(self.locs_filepath)
+        # eliminate spatial outliers from localizations
+        self.locs_nooutliers = self.eliminate_outliers(self.locs)
+        # now filter localizations based on photons numbers
+        self.locs_filt = self.filter_locs_forph(self.locs_nooutliers)
+        # compute average photon number and SBR based on filtered localizations
+        self.avg_ph_perloc, self.avg_sbr = self.get_avg_loc_param(self.locs_filt)
+        self.calc_crb(self.avg_ph_perloc, self.avg_sbr)
+        self.plot_crb_andebp()
+        self.locs_centered = self.center_locs(self.locs_filt)
+        self.get_glob_plots_limits(self.locs_centered)
+        self.plot_locs_timecoded(self.locs_centered)
+        self.plot_loc_density(self.locs_centered)
+        
+    def load_locs(self, locs_filepath):
         """
         This function loads the localization array saved as a .npy
         """
-        self.locs = np.load(self.locs_filepath)
+        locs = np.load(locs_filepath)
+        self.avg_ph_perloc = np.mean(locs[:,3])
+        self.sigma_ph_perloc = np.std(locs[:,3])
+        print(f"Average number of photons per localization: {self.avg_ph_perloc} \u00B1 {self.sigma_ph_perloc}")
+        return locs
         
-    def plot_locs_timecoded(self):
+    def eliminate_outliers(self, locs):
         """
-        This function draws plots to show the results of the lcalizations analysis
+        This function eliminates all localization exceeding 3 sigma from the center of mass
         """
-        plt.figure('Localizations')
-        for beam_idx, min_pos in enumerate(self.ebp.pos_mins):
-            plt.scatter(*(min_pos - self.ebp.pos_mins[0]), color=self.ebp.psf_colors[beam_idx], s=100)
-        plt.scatter(self.locs[:,1] - self.ebp.pos_mins[0][0], self.locs[:,2] - self.ebp.pos_mins[0][1], c=range(len(self.locs[:,0])), cmap='rainbow', s=20, alpha=0.2)
+        self.average_coords_locs = (
+            np.mean(locs[:, 1]),
+            np.mean(locs[:, 2])
+        )
+        self.average_sigma_locs = (
+            np.std(locs[:, 1]),
+            np.std(locs[:, 2])
+        )
+        dists_loc_from_center = np.sqrt(
+            (locs[:, 1] - self.average_coords_locs[0])**2 + (locs[:, 2] - self.average_coords_locs[1])**2
+        )
+        locs_nooutliers = locs[dists_loc_from_center < SIGMA_TOL_OUTLIERS * np.sqrt(self.average_sigma_locs[0]**2 + self.average_sigma_locs[1]**2)]
+        return locs_nooutliers
+        
+    def filter_locs_forph(self, locs):
+        """This function filters out localizations obtained with less photons than a chosen threshold"""
+        min_ph_perloc_input = input("Minimum number of photons required for a single localization (no input for no filtering): ")
+        if min_ph_perloc_input:
+            self.min_ph_perloc = float(min_ph_perloc_input)
+        else:
+            self.min_ph_perloc = 0
+        locs_filtered = locs[locs[:, 3] >= self.min_ph_perloc]
+        return locs_filtered
+        
+    def get_avg_loc_param(self, locs):
+        """
+        This function computes the average number of photons and SBR for the remaining localizations
+        """
+        avg_ph_perloc = np.mean(locs[:, 3])
+        avg_sbr = np.average(locs[:, 4], weights=locs[:, 3])
+        return avg_ph_perloc, avg_sbr
+        
+    def center_locs(self, locs):
+        """
+        This function changes system of reference for the localizations, cenetering their values in the minimum of the first beam
+        """
+        locs_centered = copy.deepcopy(locs)
+        locs_centered[:, 1] -= self.ebp.pos_mins_nm[0][0]
+        locs_centered[:, 2] -= self.ebp.pos_mins_nm[0][1]
+        return locs_centered
+        
+    def get_glob_plots_limits(self, locs):
+        """
+        This function computes the limit in x and y for plots to keep the size of the plotted area consistent
+        """
+        self.x_ebp_range = (
+            min(self.ebp.pos_mins_centered_nm, key=lambda elem: elem[0])[0],
+            max(self.ebp.pos_mins_centered_nm, key=lambda elem: elem[0])[0]
+        )
+        self.y_ebp_range = (
+            min(self.ebp.pos_mins_centered_nm, key=lambda elem: elem[1])[1],
+            max(self.ebp.pos_mins_centered_nm, key=lambda elem: elem[1])[1]
+        )
+        self.x_filt_locs_range = (np.min(locs[:, 1]), np.max(locs[:, 1]))
+        self.y_filt_locs_range = (np.min(locs[:, 2]), np.max(locs[:, 2]))
+        self.x_global_range = (np.min((self.x_ebp_range[0], self.x_filt_locs_range[0])), np.max((self.x_ebp_range[1], self.x_filt_locs_range[1])))
+        self.y_global_range = (np.min((self.y_ebp_range[0], self.y_filt_locs_range[0])), np.max((self.y_ebp_range[1], self.y_filt_locs_range[1])))
+        # add a 10% padding
+        self.x_plot_range = (self.x_global_range[0] - 0.1 * (self.x_global_range[1] - self.x_global_range[0]), self.x_global_range[1] + 0.1 * (self.x_global_range[1] - self.x_global_range[0]))
+        self.y_plot_range = (self.y_global_range[0] - 0.1 * (self.y_global_range[1] - self.y_global_range[0]), self.y_global_range[1] + 0.1 * (self.y_global_range[1] - self.y_global_range[0]))
+                    
+    def calc_crb(self, ph_perloc, sbr):
+        """
+        This function computes the crb based on the experimental SBR and average photon number (averaging x and y errors)
+        """
+        self.σ_CRB = crb_minflux(NUM_PULSES, self.ebp.psf_fits, sbr, STEP_NM, self.ebp.size_nm, ph_perloc, method='1')
+     
+    def plot_crb_andebp(self):
+        """
+        This function plots the CRB map alone
+        """
+        # Create the CRB plot with the same extent as the scatter plots
+        plt.figure('CRB_map')
+        plt.imshow(self.σ_CRB, cmap='viridis', vmin=0, vmax=20)
+        plt.colorbar(label='σ_CRB Value')
+
+        # Plot PSF minima positions with the same color mapping as before
+        for i, p in enumerate(self.ebp.pos_mins_centered_nm):
+            plt.scatter(*self.ebp.pos_mins_centered_nm, 
+                        color=self.ebp.psf_colors[i], s=100)
+
+        # Ensure the axes and aspect ratio are the same as in scatter plots
+        plt.gca().set_aspect('equal')
+        plt.xlabel('x (nm)')
+        plt.ylabel('y (nm)')
+        plt.title('σ_CRB with Aligned Reference Frame')
+        plt.tight_layout()
+        plt.show()
+                        
+    def plot_locs_timecoded(self, locs):
+        """
+        This function plots all (filtered) localizations, encoding with time, superposed with the EBP
+        """
+        plt.figure('Time-encoded localizations')
+        for beam_idx, min_pos in enumerate(self.ebp.pos_mins_centered_nm):
+            plt.scatter(*min_pos, color=self.ebp.psf_colors[beam_idx], s=100)
+        plt.scatter(locs[:, 1], locs[:, 2], c=range(len(locs[:, 0])), cmap='rainbow', s=20, alpha=0.2)
+        plt.xlim(self.x_plot_range)
+        plt.ylim(self.y_plot_range)
         # Annotations
         plt.gca().set_aspect('equal'), plt.xlabel('x (nm)'), plt.ylabel('y (nm)'), plt.tight_layout()
         plt.show()
+        
+    def plot_loc_density(self, locs):
+        """
+        This function produces the 2D histogram of the localization density, superposed with the EBP
+        """
+        bin_x_edges = np.arange(int(self.x_plot_range[0]), int(self.x_plot_range[1]) + self.bin_size, self.bin_size)
+        bin_y_edges = np.arange(int(self.y_plot_range[0]), int(self.y_plot_range[1]) + self.bin_size, self.bin_size)
+        loc_dens_hist, _, _ = np.histogram2d(locs[:, 1], locs[:, 2], bins=(bin_x_edges, bin_y_edges))
+        max_loc_dens = np.max(loc_dens_hist)
+        plt.figure('Localization density')
+        plt.hist2d(locs[:, 1], locs[:, 2], bins=(bin_x_edges, bin_y_edges), cmap='magma', vmin=max_loc_dens * 0.1)
+        for beam_idx, min_pos in enumerate(self.ebp.pos_mins_centered_nm):
+            plt.scatter(*min_pos, color=self.ebp.psf_colors[beam_idx], s=100)
+        plt.xlim(self.x_plot_range)
+        plt.ylim(self.y_plot_range)
+        # Annotations
+        plt.gca().set_aspect('equal'), plt.xlabel('x (nm)'), plt.ylabel('y (nm)'), plt.tight_layout()
+        plt.show()
+        
+class ClockAnalysis():
+    def __init__(self, post_proc_data: DataPostProcessor):
+        self.post_proc_data = post_proc_data
+        
+        def fit_andplot_clockaxis(self):
+            pass
+        
 
 if __name__ == "__main__":
     # Open fitted experimental PSFs
@@ -413,24 +562,29 @@ if __name__ == "__main__":
         if filepath.is_file():
             if (tcspc_filename.split('.')[0] in filepath.name) and (LOCS_FILE_SUFFIX in filepath.name):
                 locs_filepath_list.append(filepath)
-    if not locs_filepath_list:
-        print("No existing result files found. Executing full analysis.")
-        # execute full analysis if no previous result file is found
-        tcspc_data = TCSPCData(tcspc_file, timetrace_bin_width_s, τ)
-        minflux_analysis = MINFLUXAnalysis(ebp, tcspc_data, target_n_ph)
-        locs_filepath_list.append(minflux_analysis.locs_results_filepath)
-        result_filenumber_chosen = 0
-    else:
+    if locs_filepath_list:
         print("Result files found:")
         for filenumber, filepath in enumerate(locs_filepath_list):
             print(f"{filenumber}. {filepath.name}")
-        result_filenumber_chosen = int(input("Insert number of the result file to be used: "))
-    postproc = DataPostProcessor(locs_filepath_list[result_filenumber_chosen], ebp)
-    
+        use_existing_result_file_choice = input("Do you want to use an existing result file? (y/n) ")
+        if use_existing_result_file_choice == 'y':
+            result_filenumber_chosen = int(input("Insert number of the result file to be used: "))
+    if (not locs_filepath_list) or (use_existing_result_file_choice == 'n'):
+        if not locs_filepath_list:
+            print("No previous result file found...")
+        print("Executing full analysis.")
+        # execute full analysis if no previous result file is found
+        tcspc_data = TCSPCData(tcspc_file, bckg_file, timetrace_bin_width_s, τ)
+        minflux_analysis = MINFLUXAnalysis(ebp, tcspc_data, target_n_ph)
+        locs_filepath_list.append(minflux_analysis.locs_results_filepath)
+        result_filenumber_chosen = 0
+    locs_dens_hist_bin_size = 1
+    postproc = DataPostProcessor(locs_filepath_list[result_filenumber_chosen], ebp, locs_dens_hist_bin_size)
+    clock_analysis_choice = input("Do you want to perform the analysis for the clock origami? (y/n) ")
+    if clock_analysis_choice == 'y':
+        clock_analysis = ClockAnalysis(postproc)
     
 #%% Localizations
-
-
 ax = plt.gca()
 ax.get_xlim()
 ax.get_ylim()
@@ -455,29 +609,6 @@ plt.xlabel('x (nm)')
 plt.ylabel('y (nm)')
 plt.title('Density of Localizations, , <N> = {np.mean(N)}')
 plt.show()
-
-#%% Pocos outliers Revisar si conviene usar esta manera
-# # Calculo de percentiles 5 y 95 para evitar valores extremos
-# p5, p95 = np.percentile(x_loc, [5, 95])
-
-# umbral_x = (p5 + p95) / 2
-
-# # Filtro de datos en dos nubes
-# nube1_mask = x_loc < umbral_x  # Nube izquierda
-# nube2_mask = x_loc >= umbral_x  # Nube derecha
-
-# x_nube1, y_nube1 = x_loc[nube1_mask], y_loc[nube1_mask]
-# x_nube2, y_nube2 = x_loc[nube2_mask], y_loc[nube2_mask]
-
-# # Calcular estadísticas de cada nube
-# meanx1, meany1 = np.mean(x_nube1), np.mean(y_nube1)
-# sigmax1, sigmay1 = np.std(x_nube1), np.std(y_nube1)
-
-# meanx2, meany2 = np.mean(x_nube2), np.mean(y_nube2)
-# sigmax2, sigmay2 = np.std(x_nube2), np.std(y_nube2)
-
-# print(f"Nube 1: <x> = {meanx1:.2f} nm, <y> = {meany1:.2f} nm, σx = {sigmax1:.2f} nm, σy = {sigmay1:.2f} nm")
-# print(f"Nube 2: <x> = {meanx2:.2f} nm, <y> = {meany2:.2f} nm, σx = {sigmax2:.2f} nm, σy = {sigmay2:.2f} nm")
 
 #%% 3 Sigmas
 #Creo que elijo esta forma, revisar si es lo mejor

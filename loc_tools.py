@@ -6,8 +6,8 @@ from configvar import NUM_PULSES
 
 def indexToSpace(index, size_nm, px_nm):
     space = np.zeros(2)
-    space[0] = index[1]*px_nm - size_nm/2
-    space[1] = size_nm/2 - index[0]*px_nm
+    space[0] = index[1]*px_nm
+    space[1] = index[0]*px_nm
     return np.array(space)
 
 def likelihood(NUM_PULSES, PSF, n, λb, pos_nm, step_nm, size_nm):
@@ -101,14 +101,15 @@ def pos_minflux(n, normed_psfs, sbr, bckg_contrib, step_nm):
     
     return pos_estimator
 
-def loc_trace_minflux(ph_perloc_perpulse, bckg_ph_perloc_perpulse, psfs, step_nm):
+def loc_trace_minflux(ph_perloc_perpulse, bckg_ph_perloc_perpulse, sbr_perloc, psfs, step_nm):
     """
     This function computes the whole localization trace using MINFLUX localization algorithm (MLE)
     
     Inputs
     ----------
-    ph_perloc_perpulse : array of number of photons for each localization and pulse
-    bckg_ph_perloc_perpulse: number of background photons per localization and for each pulse
+    ph_perloc_perpulse : array of number of photons for each localization and pulse (number of pulses x number of locs)
+    bckg_ph_perloc_perpulse: number of background photons per localization and for each pulse (number of locs)
+    sbr_perloc: SBR for each localization (number of locs)
     psfs : array with PSFs (number of pulses x size x size)
     
     Returns
@@ -128,8 +129,7 @@ def loc_trace_minflux(ph_perloc_perpulse, bckg_ph_perloc_perpulse, psfs, step_nm
     bckg_contrib = bckg_ph_perloc_perpulse / tot_bckg_ph_inloc
     locs = np.empty((n_loc, 2), dtype=float)
     for loc_idx in range(n_loc):
-        sbr = np.sum(ph_perloc_perpulse[:, loc_idx]) / tot_bckg_ph_inloc - 1
-        locs[loc_idx, :] = pos_minflux(ph_perloc_perpulse[:, loc_idx], normed_psfs, sbr, bckg_contrib, step_nm)
+        locs[loc_idx, :] = pos_minflux(ph_perloc_perpulse[:, loc_idx], normed_psfs, sbr_perloc[loc_idx], bckg_contrib, step_nm)
     return locs
 
 def crb_minflux(NUM_PULSES, PSF, SBR, px_nm, size_nm, N, method='1'):
