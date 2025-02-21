@@ -35,6 +35,7 @@ from natsort import natsorted
 from pathlib import Path
 from scipy.optimize import curve_fit
 from scipy.stats import gaussian_kde
+from hmmlearn.hmm import GaussianHMM
 from loc_tools import indexToSpace, crb_minflux, loc_trace_minflux
 from configvar import (
     TCSPC_TIME_OFFSET_NS,
@@ -52,9 +53,9 @@ from configvar import (
 plt.close('all')
 
 
-date = '20250220'
-#tcspc_filename = 'clock_20250214-152357_.npy'
-tcspc_filename = 'psf_center0_fit_and_move_100px_20250220-204338_.npy'
+date = '20250214'
+tcspc_filename = 'clock_20250214-152357_.npy'
+#tcspc_filename = 'psf_center0_fit_and_move_100px_20250220-204338_.npy'
 bckg_filename = 'bead_bkg_20250220-205458_.npy'
 psf_dir = PSF_DIR_BASE / date
 data_dir = DATA_DIR_BASE / date
@@ -386,7 +387,8 @@ class MINFLUXAnalysis():
         """
         This function save the localizations as a .npy file, to be accessed and used for post-processing
         """
-        self.locs_results_filename = self.tcspc_data.tcspc_data_filename + LOCS_FILE_SUFFIX + str(int(self.locs_t_binning_s * 1e3)) + 'ms_binning.npy'
+        self.locs_results_filename = (self.tcspc_data.tcspc_data_filename + LOCS_FILE_SUFFIX + 'from' + str(int(self.tcspc_data.start_t_s)) +
+                                      'to' + str(int(self.tcspc_data.end_t_s)) + 's_' + str(int(self.locs_t_binning_s * 1e3)) + 'ms_binning.npy')
         self.locs_results_filepath = self.tcspc_data.tcspc_data_dir / self.locs_results_filename
         np.save(self.locs_results_filepath, self.localizations)
 
@@ -412,8 +414,8 @@ class DataPostProcessor():
         # get range for future plots
         self.x_plot_range, self.y_plot_range = self.get_glob_plots_limits(self.locs_centered)
         # all plots
-        self.plot_locs_timecoded(self.locs_centered)
-        self.plot_loc_density(self.locs_centered)
+        self.plot_locs_timecoded_withebp(self.locs_centered)
+        self.plot_loc_density_withebp(self.locs_centered)
         self.plot_locs_withcrb(self.locs_centered)
         
     def load_locs(self, locs_filepath):
@@ -527,7 +529,7 @@ class DataPostProcessor():
         plt.tight_layout()
         plt.show()
                         
-    def plot_locs_timecoded(self, locs):
+    def plot_locs_timecoded_withebp(self, locs):
         """
         This function plots all (filtered) localizations, encoding with time, superposed with the EBP
         """
@@ -541,7 +543,7 @@ class DataPostProcessor():
         plt.gca().set_aspect('equal'), plt.xlabel('x (nm)'), plt.ylabel('y (nm)'), plt.tight_layout()
         plt.show()
         
-    def plot_loc_density(self, locs):
+    def plot_loc_density_withebp(self, locs):
         """
         This function produces the 2D histogram of the localization density, superposed with the EBP
         """
@@ -599,7 +601,9 @@ class ClockOrigamiAnalysis():
         self.x_plot_range, self.y_plot_range = self.post_proc_data.get_glob_plots_limits(self.post_proc_data.locs_centered)
         self.center_of_locs, self.locs_zeroavg = self.recenter_locs(self.post_proc_data.locs_centered)
         self.fit_andplot_clockaxis(self.post_proc_data.locs_centered)
-        self.locs_zeroavg_rot = self.rotate_locs(self.locs_zeroavg, self.axis_slope)
+        self.locs_zeroavg_rotated = self.rotate_locs(self.locs_zeroavg, self.axis_slope)
+        self.plot_loc_trace(self.locs_zeroavg_rotated)
+        self.hmm_fit(self.locs_zeroavg_rotated)
 
     def recenter_locs(self, locs):
         """
@@ -633,7 +637,57 @@ class ClockOrigamiAnalysis():
         plt.show()
         
     def rotate_locs(self, locs, axis_slope):
-        pass
+        """
+        This function returns the localizations in a new system of reference rotated accoridng to a given new x axis
+        """
+        self.rot_angle = np.arctan(axis_slope)
+        rotated_locs = copy.deepcopy(locs)
+        rotated_locs[:, 1] = locs[:, 1] * np.cos(self.rot_angle) + locs[:, 2] * np.sin(self.rot_angle)
+        rotated_locs[:, 2] = - locs[:, 1] * np.sin(self.rot_angle) + locs[:, 2] * np.cos(self.rot_angle)
+        return rotated_locs
+    
+    def plot_loc_trace(self, locs):
+        """
+        This function 
+        """
+        plt.figure("Localizations x time trace")
+        plt.plot(locs[:, 0], locs[:, 1], label='x (nm)')
+        plt.xlabel('Time (s)')
+        plt.ylabel('Localizations (nm)')
+        plt.title('')
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+        
+        plt.figure("Localizations y time trace")
+        plt.plot(locs[:, 0], locs[:, 2], label='y (nm)')
+        plt.xlabel('Time (s)')
+        plt.ylabel('Localizations (nm)')
+        plt.title('')
+        plt.legend()
+        plt.grid(True)
+        plt.show()
+        
+    def hmm_fit(self, locs):
+        model = GaussianHMM(n_components=2, covariance_type="full", n_iter=1000)
+        model.fit(locs[:, 1].reshape(-1, 1))
+        hidden_states = model.predict(locs[:, 1].reshape(-1, 1))
+        print(hidden_states)
+        locs_statezero = locs[hidden_states == 0]
+        locs_stateone = locs[hidden_states == 1]
+        avg_statezero = np.mean(locs_statezero[:, 1])
+        avg_stateone = np.mean(locs_stateone[:, 1])
+        downstate_idx = np.argmin((avg_statezero, avg_stateone))
+        if downstate_idx == 0:    
+            hidden_states_rescaled = hidden_states * abs(avg_stateone - avg_statezero) + np.min((avg_stateone, avg_statezero))
+        else:
+            hidden_states_rescaled = (1 - hidden_states) * abs(avg_stateone - avg_statezero) + np.min((avg_stateone, avg_statezero))
+        print(hidden_states_rescaled)
+        plt.figure(figsize=(12, 6))
+        plt.plot(locs[:, 1], label="Localization Trace")
+        plt.plot(hidden_states_rescaled, label="Predicted Hidden States", linestyle='--', color='red')
+        plt.legend()
+        plt.show()
         
 
 if __name__ == "__main__":
@@ -660,223 +714,10 @@ if __name__ == "__main__":
         tcspc_data = TCSPCData(tcspc_file, bckg_file, timetrace_bin_width_s, τ)
         minflux_analysis = MINFLUXAnalysis(ebp, tcspc_data, target_n_ph)
         locs_filepath_list.append(minflux_analysis.locs_results_filepath)
-        result_filenumber_chosen = 0
+        result_filenumber_chosen = -1
     locs_dens_hist_bin_size = 1
     postproc = DataPostProcessor(locs_filepath_list[result_filenumber_chosen], ebp, locs_dens_hist_bin_size)
     clock_analysis_choice = input("Do you want to perform the analysis for the clock origami? (y/n) ")
     if clock_analysis_choice == 'y':
         clock_analysis = ClockOrigamiAnalysis(postproc)
-    
-#%% Localizations
-ax = plt.gca()
-ax.get_xlim()
-ax.get_ylim()
-#%% KDE plot
-x_min, x_max = np.min(x_loc), np.max(x_loc)
-y_min, y_max = np.min(y_loc), np.max(y_loc)
 
-x_grid = np.linspace(x_min, x_max, 300)
-y_grid = np.linspace(y_min, y_max, 300)
-X, Y = np.meshgrid(x_grid, y_grid)
-
-positions = np.vstack([X.ravel(), Y.ravel()])
-values = np.vstack([x_loc, y_loc])
-kde = gaussian_kde(values, bw_method=0.1)
-Z = np.reshape(kde(positions), X.shape)
-
-plt.figure('Localization Density')
-plt.imshow(Z, origin='lower', extent=[x_min, x_max, y_min, y_max], cmap='hot', aspect='auto')
-plt.colorbar(label="Density")
-#plt.scatter(x_loc, y_loc, c='gray', s=5, alpha=0.25)  #
-plt.xlabel('x (nm)')
-plt.ylabel('y (nm)')
-plt.title('Density of Localizations, , <N> = {np.mean(N)}')
-plt.show()
-
-#%% 3 Sigmas
-#Creo que elijo esta forma, revisar si es lo mejor
-mean_x = np.mean(x_loc)
-std_x = np.std(x_loc)
-
-#Límites basado en 3 sigmas
-lim_inf, lim_sup = mean_x - 3 * std_x, mean_x + 3 * std_x
-
-# Filtro
-mask_valid = (x_loc > lim_inf) & (x_loc < lim_sup)
-x_clean, y_clean = x_loc[mask_valid], y_loc[mask_valid]
-
-# Método del umbral con percentiles
-p5, p95 = np.percentile(x_clean, [5, 95])
-umbral_x = (p5 + p95) / 2
-
-nube1_mask = x_clean < umbral_x
-nube2_mask = x_clean >= umbral_x
-
-x_nube1, y_nube1 = x_clean[nube1_mask], y_clean[nube1_mask]
-x_nube2, y_nube2 = x_clean[nube2_mask], y_clean[nube2_mask]
-
-meanx1, meany1 = np.mean(x_nube1), np.mean(y_nube1)
-sigmax1, sigmay1 = np.std(x_nube1), np.std(y_nube1)
-meanx2, meany2 = np.mean(x_nube2), np.mean(y_nube2)
-sigmax2, sigmay2 = np.std(x_nube2), np.std(y_nube2)
-
-print(f"Nube 1: <x> = {meanx1:.2f} nm, <y> = {meany1:.2f} nm, σx = {sigmax1:.2f} nm, σy = {sigmay1:.2f} nm")
-print(f"Nube 2: <x> = {meanx2:.2f} nm, <y> = {meany2:.2f} nm, σx = {sigmax2:.2f} nm, σy = {sigmay2:.2f} nm")
-
-#%% Trace bins
-bins_num=range(0,len(x_loc))
-plt.figure('Trace')
-plt.plot(bins_num, x_loc, label='x', alpha=0.8) #, marker='o', markersize=4)
-plt.plot(bins_num, y_loc, label='y', alpha=0.8) #, marker='o', markersize=4)
-
-plt.xlabel('bins')
-plt.ylabel('Localizations')
-plt.title('Time trace')
-plt.legend()
-plt.grid(True)
-plt.show()
-#%% Trace localizations - Analyse clouds
-time_seconds_binned = np.array([np.mean(abs_time[i * bin_size : (i + 1) * bin_size]) for i in range(nbins)])  
-time_seconds_binned = (time_seconds_binned - abs_time.min()) / 1E12
-plt.figure("Time Trace")
-plt.plot(time_seconds_binned, x_loc, label='x (nm)', marker='o', markersize=4, alpha=0.8)
-plt.plot(time_seconds_binned, y_loc, label='y (nm)', marker='o', markersize=4, alpha=0.8)
-plt.xlabel('Time (s)')
-plt.ylabel('Localizations (nm)')
-plt.title('')
-plt.legend()
-plt.grid(True)
-plt.show()
-
-definir_nubes = True
-nube_ranges = []
-while definir_nubes:
-    try:
-        start_bin = int(input("Ingrese el bin de inicio de la nube (o -1 para terminar): "))
-        if start_bin == -1:
-            break
-        end_bin = int(input("Ingrese el bin de fin de la nube: "))
-        nube_ranges.append((start_bin, end_bin))
-    except ValueError:
-        print("Por favor, ingrese valores enteros válidos.")
-
-for i, (start, end) in enumerate(nube_ranges):
-    x_nube = x_loc[start:end]
-    y_nube = y_loc[start:end]
-    
-    mean_x, std_x = np.mean(x_nube), np.std(x_nube)
-    mean_y, std_y = np.mean(y_nube), np.std(y_nube)
-    
-    print(f"Nube {i+1}: Bins {start} - {end}")
-    print(f"  Media X: {mean_x:.2f} nm, Desviación X: {std_x:.2f} nm")
-    print(f"  Media Y: {mean_y:.2f} nm, Desviación Y: {std_y:.2f} nm")
-    
-    plt.figure(f"Nube {i+1}")
-    plt.scatter(x_nube, y_nube, c=range(len(x_nube)), cmap='rainbow', s=20)
-    plt.xlabel('x (nm)')
-    plt.ylabel('y (nm)')
-    plt.title(f'Nube {i+1} de Localizaciones')
-    plt.colorbar(label='Orden Temporal')
-    plt.grid(True)
-    plt.show()
-    
-    #Gaussian fit
-    hist, bin_edges = np.histogram(x_nube, bins=30, density=True)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-
-    popt, pcov = curve_fit(gauss, bin_centers, hist, p0=[1, np.mean(x_nube), np.std(x_nube)])
-    a_fit, mu_fit, sigma_fit = popt
-
-    plt.figure()
-    x = np.linspace(min(x_nube), max(x_nube), 1000)
-    plt.hist(x_nube, bins=30, density=True, alpha=0.6, color='g', label='Data')
-    plt.plot(x, gauss(x, *popt), 'r-', label=r'Gaussian\n$\mu={mu_fit:.2f}, \sigma={sigma_fit:.2f}$')
-    plt.xlabel('x (nm)')
-    plt.ylabel('Density')
-    plt.legend()
-    plt.title(f'Gaussian fit x locs in Cloud {i}')
-    plt.show()
-
-    hist, bin_edges = np.histogram(y_nube, bins=30, density=True)
-    bin_centers = (bin_edges[:-1] + bin_edges[1:]) / 2
-
-    popt, pcov = curve_fit(gauss, bin_centers, hist, p0=[1, np.mean(y_nube), np.std(y_nube)])
-    a_fit, mu_fit, sigma_fit = popt
-    plt.figure()
-    x = np.linspace(min(y_loc), max(y_loc), 1000)
-    plt.hist(y_nube, bins=30, density=True, alpha=0.6, color='g', label='Data')
-    plt.plot(x, gauss(x, *popt), 'r-', label=r'Gaussian\n$\mu={mu_fit:.2f}, \sigma={sigma_fit:.2f}$')
-    plt.xlabel('y (nm)')
-    plt.ylabel('Density')
-    plt.legend()
-    plt.title(f'Gaussian fit y locs in Cloud {i}')
-    plt.show()
-
-#%%
-plt.figure('All Localizations with Ellipses')
-
-# Colores para cada nube
-colors = ['blue', 'orange', 'green', 'red', 'purple']
-
-for i, (start_bin, end_bin) in enumerate(nube_ranges):
-    x_nube = x_loc[start_bin:end_bin]
-    y_nube = y_loc[start_bin:end_bin]
-    
-    meanx, meany = np.mean(x_nube), np.mean(y_nube)
-    sigmax, sigmay = np.std(x_nube), np.std(y_nube) # Esto creo que no se está calculando bien
-    print(f"Nube {i+1}: Bins {start} - {end}")
-    print(f"  Media X: {meanx:.2f} nm, Desviación X: {sigmax:.2f} nm")
-    print(f"  Media Y: {meany:.2f} nm, Desviación Y: {sigmay:.2f} nm")
-    plt.scatter(x_nube, y_nube, color=colors[i % len(colors)], alpha=0.4, label=f'Nube {i+1}')
-
-    elipse = patches.Ellipse((meanx, meany), 2 * sigmax, 2 * sigmay, edgecolor=colors[i % len(colors)], 
-                              facecolor='none', linewidth=2, linestyle='--')
-    plt.gca().add_patch(elipse)
-    plt.scatter(meanx, meany, color=colors[i % len(colors)], marker='+', s=100)
-
-plt.xlabel('x (nm)')
-plt.ylabel('y (nm)')
-plt.gca().set_aspect('equal')
-plt.legend()
-plt.title('Localizaciones de todas las nubes con elipses de dispersión')
-plt.tight_layout()
-plt.show()
-#%% Análisis de nubes
-def plot_ellipse_cov(mean, cov, ax, color='red', alpha=0.3):
-    """Dibuja una elipse usando la covarianza."""
-    vals, vecs = np.linalg.eigh(cov)
-    width, height = 2 * np.sqrt(vals)  # Escala con desviaciones estándar
-    angle = np.degrees(np.arctan2(*vecs[:, 1][::-1]))  # Orientación
-    ell = Ellipse(xy=mean, width=width, height=height, angle=angle,
-                  edgecolor=color, facecolor=color, alpha=alpha)
-    ax.add_patch(ell)
-
-def plot_ellipse_percentile(x, y, ax, color='blue', alpha=0.3):
-    """Dibuja una elipse basada en percentiles del 68%."""
-    mean_x, mean_y = np.mean(x), np.mean(y)
-    perc_x, perc_y = np.percentile(x, [16, 84]), np.percentile(y, [16, 84])
-    width, height = perc_x[1] - perc_x[0], perc_y[1] - perc_y[0]
-    ell = Ellipse(xy=(mean_x, mean_y), width=width, height=height,
-                  edgecolor=color, facecolor=color, alpha=alpha)
-    ax.add_patch(ell)
-
-fig, ax = plt.subplots(figsize=(6, 6))
-colors = ['blue','cyan','green', 'orange','red']
-for i, (start, end) in enumerate(nube_ranges):
-    x_nube, y_nube = x_loc[start:end], y_loc[start:end]
-    mean = [np.mean(x_nube), np.mean(y_nube)]
-    cov = np.cov(x_nube, y_nube)
-    ax.scatter(x_nube, y_nube, s=10, alpha=0.3, label=f'Nube {i+1}', color=colors[i])
-
-    # Elipse basada en covarianza
-    plot_ellipse_cov(mean, cov, ax, color=colors[i])
-
-    # Elipse basada en percentiles
-    plot_ellipse_percentile(x_nube, y_nube, ax, color='black')
-
-ax.set_xlabel('x (nm)')
-ax.set_ylabel('y (nm)')
-ax.set_aspect('equal')
-ax.legend()
-plt.title('')
-plt.show()
