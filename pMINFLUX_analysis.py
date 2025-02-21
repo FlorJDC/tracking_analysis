@@ -52,10 +52,10 @@ from configvar import (
 plt.close('all')
 
 
-date = '20250214'
-tcspc_filename = 'clock_20250214-152357_.npy'
-#tcspc_filename = 'medicion_cente0_psf_fit_and_move_20250219-111915_.npy'
-bckg_filename = ''
+date = '20250220'
+#tcspc_filename = 'clock_20250214-152357_.npy'
+tcspc_filename = 'psf_center0_fit_and_move_100px_20250220-204338_.npy'
+bckg_filename = 'bead_bkg_20250220-205458_.npy'
 psf_dir = PSF_DIR_BASE / date
 data_dir = DATA_DIR_BASE / date
 tcspc_file = data_dir / tcspc_filename
@@ -194,10 +194,11 @@ class TCSPCData():
         
     def filter_time_data(self):
         """
-        This function asks the user the start and end time and the intensity threshold to select the relevant part of the measurement
+        This function asks the user the start and end time to select the relevant part of the measurement
         to be analysed, and filter all the data using these parameters and the relative time windows.
-        Based on this information, it automatically identifies the bleaching step as the last moment the molecule goes below
-        the intensity threshold and never recovers, and computes the background counts and average SBR.
+        If it is a single molecule, it also asks for an intensity threshold to identify the photobleaching step
+        as the last moment the molecule goes below the intensity threshold and never recovers.
+        Finally, it computes the emitter and background counts and average SBR.
         """
         start_t_input = input("Start time for analysis in s (input nothing for 0): ")
         if not start_t_input:
@@ -403,12 +404,17 @@ class DataPostProcessor():
         self.locs_filt = self.filter_locs_forph(self.locs_nooutliers)
         # compute average photon number and SBR based on filtered localizations
         self.avg_ph_perloc, self.avg_sbr = self.get_avg_loc_param(self.locs_filt)
+        # compute and plot CRB map, superimposed with EBP
         self.calc_crb(self.avg_ph_perloc, self.avg_sbr)
         self.plot_crb_andebp()
+        # recenter localizations
         self.locs_centered = self.center_locs(self.locs_filt)
-        self.get_glob_plots_limits(self.locs_centered)
+        # get range for future plots
+        self.x_plot_range, self.y_plot_range = self.get_glob_plots_limits(self.locs_centered)
+        # all plots
         self.plot_locs_timecoded(self.locs_centered)
         self.plot_loc_density(self.locs_centered)
+        self.plot_locs_withcrb(self.locs_centered)
         
     def load_locs(self, locs_filepath):
         """
@@ -469,21 +475,22 @@ class DataPostProcessor():
         """
         This function computes the limit in x and y for plots to keep the size of the plotted area consistent
         """
-        self.x_ebp_range = (
+        x_ebp_range = (
             min(self.ebp.pos_mins_centered_nm, key=lambda elem: elem[0])[0],
             max(self.ebp.pos_mins_centered_nm, key=lambda elem: elem[0])[0]
         )
-        self.y_ebp_range = (
+        y_ebp_range = (
             min(self.ebp.pos_mins_centered_nm, key=lambda elem: elem[1])[1],
             max(self.ebp.pos_mins_centered_nm, key=lambda elem: elem[1])[1]
         )
-        self.x_filt_locs_range = (np.min(locs[:, 1]), np.max(locs[:, 1]))
-        self.y_filt_locs_range = (np.min(locs[:, 2]), np.max(locs[:, 2]))
-        self.x_global_range = (np.min((self.x_ebp_range[0], self.x_filt_locs_range[0])), np.max((self.x_ebp_range[1], self.x_filt_locs_range[1])))
-        self.y_global_range = (np.min((self.y_ebp_range[0], self.y_filt_locs_range[0])), np.max((self.y_ebp_range[1], self.y_filt_locs_range[1])))
+        x_filt_locs_range = (np.min(locs[:, 1]), np.max(locs[:, 1]))
+        y_filt_locs_range = (np.min(locs[:, 2]), np.max(locs[:, 2]))
+        x_global_range = (np.min((x_ebp_range[0], x_filt_locs_range[0])), np.max((x_ebp_range[1], x_filt_locs_range[1])))
+        y_global_range = (np.min((y_ebp_range[0], y_filt_locs_range[0])), np.max((y_ebp_range[1], y_filt_locs_range[1])))
         # add a 10% padding
-        self.x_plot_range = (self.x_global_range[0] - 0.1 * (self.x_global_range[1] - self.x_global_range[0]), self.x_global_range[1] + 0.1 * (self.x_global_range[1] - self.x_global_range[0]))
-        self.y_plot_range = (self.y_global_range[0] - 0.1 * (self.y_global_range[1] - self.y_global_range[0]), self.y_global_range[1] + 0.1 * (self.y_global_range[1] - self.y_global_range[0]))
+        x_plot_range = (x_global_range[0] - 0.1 * (x_global_range[1] - x_global_range[0]), x_global_range[1] + 0.1 * (x_global_range[1] - x_global_range[0]))
+        y_plot_range = (y_global_range[0] - 0.1 * (y_global_range[1] - y_global_range[0]), y_global_range[1] + 0.1 * (y_global_range[1] - y_global_range[0]))
+        return x_plot_range, y_plot_range
                     
     def calc_crb(self, ph_perloc, sbr):
         """
@@ -497,13 +504,20 @@ class DataPostProcessor():
         """
         # Create the CRB plot with the same extent as the scatter plots
         plt.figure('CRB_map')
-        plt.imshow(self.σ_CRB, cmap='viridis', vmin=0, vmax=20)
+        # Shift CRB map by the same amount as the EBP
+        plt.imshow(
+            self.σ_CRB, cmap='viridis', vmin=0, vmax=20,
+            extent=(
+                - self.ebp.pos_mins_nm[0][0] - 0.5, self.σ_CRB.shape[1] - self.ebp.pos_mins_nm[0][0] - 0.5,
+                - self.ebp.pos_mins_nm[0][1] - 0.5, self.σ_CRB.shape[0] - self.ebp.pos_mins_nm[0][1] - 0.5
+            ),
+            origin='lower'
+        )
         plt.colorbar(label='σ_CRB Value')
 
         # Plot PSF minima positions with the same color mapping as before
-        for i, p in enumerate(self.ebp.pos_mins_centered_nm):
-            plt.scatter(*self.ebp.pos_mins_centered_nm, 
-                        color=self.ebp.psf_colors[i], s=100)
+        for beam_idx, min_pos in enumerate(self.ebp.pos_mins_centered_nm):
+            plt.scatter(*min_pos, color=self.ebp.psf_colors[beam_idx], s=100)
 
         # Ensure the axes and aspect ratio are the same as in scatter plots
         plt.gca().set_aspect('equal')
@@ -545,12 +559,81 @@ class DataPostProcessor():
         plt.gca().set_aspect('equal'), plt.xlabel('x (nm)'), plt.ylabel('y (nm)'), plt.tight_layout()
         plt.show()
         
-class ClockAnalysis():
+    def plot_locs_withcrb(self, locs):
+        """
+        This function plots the localizations superimposed with the CRB map
+        """
+        # Create the CRB plot with the same extent as the scatter plots
+        plt.figure('CRB_map with loalizations')
+        # Shift CRB map by the same amount as the EBP
+        plt.imshow(
+            self.σ_CRB, cmap='viridis', vmin=0, vmax=20,
+            extent=(
+                - self.ebp.pos_mins_nm[0][0] - 0.5, self.σ_CRB.shape[1] - self.ebp.pos_mins_nm[0][0] - 0.5,
+                - self.ebp.pos_mins_nm[0][1] - 0.5, self.σ_CRB.shape[0] - self.ebp.pos_mins_nm[0][1] - 0.5
+            ),
+            origin='lower'
+        )
+        plt.colorbar(label='σ_CRB Value')
+
+        # Plot PSF minima positions with the same color mapping as before
+        for beam_idx, min_pos in enumerate(self.ebp.pos_mins_centered_nm):
+            plt.scatter(*min_pos, color=self.ebp.psf_colors[beam_idx], s=100)
+
+        # add localizations to plot
+        plt.scatter(locs[:, 1], locs[:, 2], c='gray', s=20, alpha=0.05)
+        
+        # Ensure the axes and aspect ratio are the same as in scatter plots
+        plt.gca().set_aspect('equal')
+        plt.xlim(self.x_plot_range)
+        plt.ylim(self.y_plot_range)
+        plt.xlabel('x (nm)')
+        plt.ylabel('y (nm)')
+        plt.title('σ_CRB with Aligned Reference Frame')
+        plt.tight_layout()
+        plt.show()
+        
+class ClockOrigamiAnalysis():
     def __init__(self, post_proc_data: DataPostProcessor):
         self.post_proc_data = post_proc_data
+        self.x_plot_range, self.y_plot_range = self.post_proc_data.get_glob_plots_limits(self.post_proc_data.locs_centered)
+        self.center_of_locs, self.locs_zeroavg = self.recenter_locs(self.post_proc_data.locs_centered)
+        self.fit_andplot_clockaxis(self.post_proc_data.locs_centered)
+        self.locs_zeroavg_rot = self.rotate_locs(self.locs_zeroavg, self.axis_slope)
+
+    def recenter_locs(self, locs):
+        """
+        This function recenter localizations with respect their center of mass
+        """
+        locs_recenter = copy.deepcopy(locs)
+        center_of_locs = (np.mean(locs[:, 1]), np.mean(locs[:, 2]))
+        locs_recenter[:, 1] -= center_of_locs[0]
+        locs_recenter[:, 2] -= center_of_locs[1]
+        return center_of_locs, locs_recenter
         
-        def fit_andplot_clockaxis(self):
-            pass
+    def fit_andplot_clockaxis(self, locs):
+        """
+        This function performs gets the axis of the clock origami
+        """
+        # now perform Singular Value Decomposition analysis to find axis
+        _, _, Vt = np.linalg.svd(self.locs_zeroavg[:, 1:3])
+        main_axis = Vt[0]
+        self.axis_slope = main_axis[1] / main_axis[0]
+        axis_x = np.linspace(self.x_plot_range[0], self.x_plot_range[1], 100)
+        axis_y = (axis_x - self.center_of_locs[0]) * self.axis_slope + self.center_of_locs[1]
+        plt.figure('Clock axis plot')
+        for beam_idx, min_pos in enumerate(self.post_proc_data.ebp.pos_mins_centered_nm):
+            plt.scatter(*min_pos, color=self.post_proc_data.ebp.psf_colors[beam_idx], s=100)
+        plt.scatter(locs[:, 1], locs[:, 2], c='gray', s=20, alpha=0.05)
+        plt.plot(axis_x, axis_y, c='red', linestyle='--', linewidth=2)
+        plt.xlim(self.x_plot_range)
+        plt.ylim(self.y_plot_range)
+        # Annotations
+        plt.gca().set_aspect('equal'), plt.xlabel('x (nm)'), plt.ylabel('y (nm)'), plt.tight_layout()
+        plt.show()
+        
+    def rotate_locs(self, locs, axis_slope):
+        pass
         
 
 if __name__ == "__main__":
@@ -582,7 +665,7 @@ if __name__ == "__main__":
     postproc = DataPostProcessor(locs_filepath_list[result_filenumber_chosen], ebp, locs_dens_hist_bin_size)
     clock_analysis_choice = input("Do you want to perform the analysis for the clock origami? (y/n) ")
     if clock_analysis_choice == 'y':
-        clock_analysis = ClockAnalysis(postproc)
+        clock_analysis = ClockOrigamiAnalysis(postproc)
     
 #%% Localizations
 ax = plt.gca()
