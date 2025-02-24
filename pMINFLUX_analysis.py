@@ -707,7 +707,7 @@ class ClockOrigamiAnalysis():
         # prepare array with rotated localizations and HMM result (rescaled)
         self.rotated_clock_trace = np.empty((len(locs[:, 0]), 3), dtype=float)
         self.rotated_clock_trace[:, 0] = locs[:, 0]
-        self.rotated_clock_trace[:, 1] = locs[:, 0]
+        self.rotated_clock_trace[:, 1] = locs[:, 1]
         self.rotated_clock_trace[:, 2] = hidden_states_rescaled
         self.trace_hmm_filename = self.locs_filepath.stem + '_timetracewHMM.npy'
         self.trace_hmm_filepath = self.tcspc_data_dir / self.trace_hmm_filename
@@ -762,6 +762,10 @@ class ClockOrigamiAnalysis():
             print(f"Cloud number {gauss_idx}:")
             print(f"Center: {means[gauss_idx]}")
             print(f"Sigma: {sigmas[gauss_idx]}")
+            print(f"CRB in cloud center: {self.post_proc_data.σ_CRB[
+                int(self.post_proc_data.ebp.pos_mins_nm[0][1] + means[gauss_idx][1]),
+                int(self.post_proc_data.ebp.pos_mins_nm[0][0] + means[gauss_idx][0])
+                ]}")
             
         print(f"Estimated clock origami size: {np.sqrt((means[0][0] - means[1][0])**2 + (means[0][1] - means[1][1])**2)}")
             
