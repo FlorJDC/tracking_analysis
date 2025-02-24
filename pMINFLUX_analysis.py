@@ -612,6 +612,7 @@ class ClockOrigamiAnalysis():
         self.locs_zeroavg_rotated = self.rotate_locs(self.locs_zeroavg, self.axis_slope)
         self.plot_loc_trace(self.locs_zeroavg_rotated)
         self.hidden_states, self.hidden_states_rescaled = self.hmm_fit(self.locs_zeroavg_rotated)
+        self.calc_clock_times(self.locs_zeroavg_rotated, self.hidden_states)
         self.locs_hmmfilt = self.hmm_filter(self.post_proc_data.locs_centered, self.hidden_states)
         # repeat fits with HMM-filtered data
         self.post_proc_data.plot_locs_withcrb(self.locs_hmmfilt)
@@ -713,6 +714,16 @@ class ClockOrigamiAnalysis():
         np.save(self.trace_hmm_filepath, self.rotated_clock_trace)
         return hidden_states, hidden_states_rescaled
         
+    def calc_clock_times(self, locs, hidden_states):
+        """
+        This function extracts the average binding times from the HMM analysis
+        """
+        jumps_bins = locs[:, 0][:-1][np.logical_or(
+            np.isclose(np.diff(hidden_states), 1, atol=1e-2),
+            np.isclose(np.diff(hidden_states), -1, atol=1e-2)
+        )]
+        print(f"Average clocking time: {np.mean(np.diff(jumps_bins))} s")
+        
     def hmm_filter(self, locs, hidden_states):
         """
         This function finds all hidden state transitions and filters data based on this, throwing all
@@ -721,7 +732,7 @@ class ClockOrigamiAnalysis():
         locs_beforefilt = len(locs)
         locs_hmmfilt = locs[:-1][
             np.logical_and(
-                np.isclose(np.diff(hidden_states), 0, atol=1e-6),
+                np.isclose(np.diff(hidden_states), 0, atol=1e-2),
                 np.isclose(np.diff(np.concatenate([hidden_states[:1], hidden_states[:-1]])), 0, atol=1e-6)
             )
         ] 
