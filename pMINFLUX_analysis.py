@@ -703,6 +703,14 @@ class ClockOrigamiAnalysis():
         plt.plot(hidden_states_rescaled, label="Predicted Hidden States", linestyle='--', color='red')
         plt.legend()
         plt.show()
+        # prepare array with rotated localizations and HMM result (rescaled)
+        self.rotated_clock_trace = np.empty((len(locs[:, 0]), 3), dtype=float)
+        self.rotated_clock_trace[:, 0] = locs[:, 0]
+        self.rotated_clock_trace[:, 1] = locs[:, 0]
+        self.rotated_clock_trace[:, 2] = hidden_states_rescaled
+        self.trace_hmm_filename = self.locs_filepath.stem + '_timetracewHMM.npy'
+        self.trace_hmm_filepath = self.tcspc_data_dir / self.trace_hmm_filename
+        np.save(self.trace_hmm_filepath, self.rotated_clock_trace)
         return hidden_states, hidden_states_rescaled
         
     def hmm_filter(self, locs, hidden_states):
