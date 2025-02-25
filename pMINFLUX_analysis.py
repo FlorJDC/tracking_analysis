@@ -44,6 +44,7 @@ from configvar import (
     STEP_NM,
     LIFETIME_WIN_BEG_NS,
     LIFETIME_WIN_END_NS,
+    DIR_BASE,
     PSF_DIR_BASE,
     DATA_DIR_BASE,
     LOCS_FILE_SUFFIX,
@@ -53,14 +54,18 @@ from configvar import (
 plt.close('all')
 
 
-date = '20250214'
-tcspc_filename = 'clock_20250214-152357_.npy'
+date = '20250224'
+#tcspc_filename = 'clock_20250214-152357_.npy'
 #tcspc_filename = 'psf_center0_fit_and_move_100px_20250220-204338_.npy'
+tcspc_filename = 'SM_4steps__20250224-155635_.npy'
+tcspc_filename = 'SM_4steps__20250224-155225_.npy'
 bckg_filename = 'bead_bkg_20250220-205458_.npy'
+bckg_dark_cnts_filename = 'bckg_dark_cnts__20250224-162247_.npy'
 psf_dir = PSF_DIR_BASE / date
 data_dir = DATA_DIR_BASE / date
 tcspc_file = data_dir / tcspc_filename
 bckg_file = data_dir / bckg_filename
+bckg_file_dark_cnts_file = DIR_BASE / bckg_dark_cnts_filename
 τ = np.array([0.98, 13.8, 26.12, 39.1])  # [ns] 
 timetrace_bin_width_s = 0.1
 target_n_ph = 1000
@@ -141,9 +146,10 @@ class EBP():
         plt.show()
 
 class TCSPCData():
-    def __init__(self, tcspc_data_path: Path, bckg_data_path: Path, timetrace_bin_width_s: float, τ: list):
+    def __init__(self, tcspc_data_path: Path, bckg_data_path: Path, bckg_dark_cnts_data_path: Path, timetrace_bin_width_s: float, τ: list):
         self.tcspc_data_path = tcspc_data_path
         self.bckg_data_path = bckg_data_path
+        self.bckg_dark_cnts_data_path = bckg_dark_cnts_data_path
         self.timetrace_bin_width_s = timetrace_bin_width_s
         self.τ = τ
         # get folder and filename of the tcspc data file
@@ -158,6 +164,9 @@ class TCSPCData():
         if not self.is_single_mol:
             self.bckg_abs_time_s, self.bckg_rel_time_ns = self.load_tcspc_data(self.bckg_data_path)
             self.tot_t_measuring_bckg_s = (self.bckg_abs_time_s.max() - self.bckg_abs_time_s.min())
+        if self.use_dark_cnts_choice:
+            self.bckg_dark_cnts_abs_time_s, self.bckg_dark_cnts_rel_time_ns = self.load_tcspc_data(self.bckg_dark_cnts_data_path)
+            self.tot_t_measuring_bckg_dark_cnts_s = (self.bckg_dark_cnts_abs_time_s.max() - self.bckg_dark_cnts_abs_time_s.min())
         # process and show data
         self.filter_time_data()
         self.shift_and_plot_tcspc_data()
@@ -198,6 +207,11 @@ class TCSPCData():
             self.is_single_mol = True
         else:
             self.is_single_mol = False
+        use_dark_cnts_choice_input = input("Do you want to use a dark counts measurement? (y/n) ")
+        if use_dark_cnts_choice_input == 'y':
+            self.use_dark_cnts_choice = True
+        else:
+            self.use_dark_cnts_choice = False
         
     def filter_time_data(self):
         """
@@ -207,16 +221,16 @@ class TCSPCData():
         as the last moment the molecule goes below the intensity threshold and never recovers.
         Finally, it computes the emitter and background counts and average SBR.
         """
-        start_t_input = input("Start time for analysis in s (input nothing for 0): ")
-        if not start_t_input:
+        self.start_t_input = input("Start time for analysis in s (input nothing for 0): ")
+        if not self.start_t_input:
             self.start_t_s = 0.0
         else:
-            self.start_t_s = float(start_t_input)
-        end_t_input = input("End time for analysis in s (input nothing for end of the trace): ")
-        if not end_t_input:
+            self.start_t_s = float( self.start_t_input)
+        self.end_t_input = input("End time for analysis in s (input nothing for end of the trace): ")
+        if not  self.end_t_input:
             self.end_t_s = self.tot_t_measuring_s
         else:
-            self.end_t_s = float(end_t_input)
+            self.end_t_s = float( self.end_t_input)
         # if it is a single molecule, asks for intensity threshold to identify the photobleaching step and filter data based on that
         if self.is_single_mol:
             int_threshold = float(input("Intensity threshold for signal in Hz: "))
@@ -235,6 +249,10 @@ class TCSPCData():
         else: 
             # if there is not photobleaching step, counts are considered until the end of the measurement
             self.emitter_stop_t_s = self.tot_t_measuring_s
+        if self.use_dark_cnts_choice:
+            self.start_t_s_forbaseline_bckg = float(input("Start time to estimate baseline SBR in s: "))
+            if not self.start_t_s_forbaseline_bckg:
+                self.start_t_s = 0.0
             
         # here filter the data based on the start and end time selected by the user
         self.filt_rel_time_ns = self.rel_time_ns[np.logical_and(
@@ -247,9 +265,24 @@ class TCSPCData():
         )]
         # only if it is a single molecule, gets the background counts from the measurement itself, after photobleaching
         if self.is_single_mol:
+            print(f"Background starts at {self.bckg_start_t_s}")
             self.bckg_rel_time_ns = self.rel_time_ns[self.abs_time_s > self.bckg_start_t_s]
             self.bckg_abs_time_s = self.abs_time_s[self.abs_time_s > self.bckg_start_t_s]
         self.photons_tokeep = len(self.filt_abs_time_s)
+        
+        if self.use_dark_cnts_choice:
+            self.sgnl_for_baseline_sbr_rel_time_ns = self.rel_time_ns[
+                np.logical_and(
+                    self.abs_time_s > self.start_t_s_forbaseline_bckg,
+                    self.abs_time_s < self.emitter_stop_t_s
+                )
+            ]
+            self.sgnl_for_baseline_sbr_abs_time_s = self.rel_time_ns[
+                np.logical_and(
+                    self.abs_time_s > self.start_t_s_forbaseline_bckg,
+                    self.abs_time_s < self.emitter_stop_t_s
+                )
+            ]
         
         print(f"Total number of detected photons in the relevant part of the measurement: {self.photons_tokeep}")
         self.avg_bckg_counts = len(self.bckg_abs_time_s) / self.tot_t_measuring_bckg_s
@@ -270,6 +303,8 @@ class TCSPCData():
         self.rel_time_shift_ns = (self.rel_time_ns - TCSPC_TIME_OFFSET_NS) % LASER_PERIOD_NS
         self.filt_rel_time_shift_ns = (self.filt_rel_time_ns - TCSPC_TIME_OFFSET_NS) % LASER_PERIOD_NS
         self.bckg_rel_time_shift_ns = (self.bckg_rel_time_ns - TCSPC_TIME_OFFSET_NS) % LASER_PERIOD_NS
+        if self.use_dark_cnts_choice:
+            self.bckg_dark_cnts_rel_time_shift_ns = (self.bckg_dark_cnts_rel_time_ns - TCSPC_TIME_OFFSET_NS) % LASER_PERIOD_NS
         
         plt.figure('Emitter TCSPC Histogram')
         plt.hist(self.filt_rel_time_shift_ns, bins = 300, range=(0,50), label='arrival time (shifted)', alpha=0.7)
@@ -300,6 +335,9 @@ class TCSPCData():
         """
         self.abs_time_s_foranalysis_perpulse = []
         self.bckg_counts_timegated_perpulse = np.empty(NUM_PULSES, dtype=float)
+        if self.use_dark_cnts_choice:
+            self.sgnl_cnts_forbaseline_sbr_timegated_perpulse = np.empty(NUM_PULSES, dtype=float)
+            self.bckg_dark_counts_timegated_perpulse = np.empty(NUM_PULSES, dtype=float)
         self.tot_counts_timegated = 0
 
         for pulse_idx in range(NUM_PULSES):
@@ -323,7 +361,26 @@ class TCSPCData():
                     self.bckg_rel_time_shift_ns < end_win,
                 )
             ]) / self.tot_t_measuring_bckg_s
+            if self.use_dark_cnts_choice:
+                self.sgnl_cnts_forbaseline_sbr_timegated_perpulse[pulse_idx] = len(self.sgnl_for_baseline_sbr_abs_time_s[
+                    np.logical_and(
+                        self.sgnl_for_baseline_sbr_rel_time_ns > start_win,
+                        self.sgnl_for_baseline_sbr_rel_time_ns < end_win,
+                    )
+                ]) / self.tot_t_measuring_bckg_dark_cnts_s
+                self.bckg_dark_counts_timegated_perpulse[pulse_idx] = len(self.bckg_dark_cnts_abs_time_s[
+                    np.logical_and(
+                        self.bckg_dark_cnts_rel_time_shift_ns > start_win,
+                        self.bckg_dark_cnts_rel_time_shift_ns < end_win,
+                    )
+                ]) / self.tot_t_measuring_bckg_dark_cnts_s
         self.bckg_counts_timegated = np.sum(self.bckg_counts_timegated_perpulse)
+        if self.use_dark_cnts_choice:
+            self.sgnl_cnts_forbaseline_sbr_timegated = np.sum(self.sgnl_cnts_forbaseline_sbr_timegated_perpulse)
+            self.bckg_dark_cnts_timegated = np.sum(self.bckg_dark_counts_timegated_perpulse)
+            self.baseline_bckg_cnts_timegated_perpulse = self.bckg_counts_timegated_perpulse - self.bckg_dark_cnts_timegated / NUM_PULSES
+            self.baseline_bckg_cnts_timegated = np.sum(self.baseline_bckg_cnts_timegated_perpulse)
+            self.baseline_sbr = (self.bckg_dark_cnts_timegated - self.bckg_dark_cnts_timegated) / self.baseline_bckg_cnts_timegated - 1
         # total emitter photons used for analysis
         self.emitter_counts_timegated = self.tot_counts_timegated - self.bckg_counts_timegated
         # real SBR
@@ -333,6 +390,9 @@ class TCSPCData():
         print("Measure parameters after TCSPC timegating:")
         print(f"Signal counts used for analysis: {self.emitter_counts_timegated}")
         print(f"Background counts for all pulses: {self.bckg_counts_timegated}")
+        if self.use_dark_cnts_choice:
+            print(f"Of which from dark counts: {self.bckg_dark_cnts_timegated}")
+            print(f"Baseline SBR (without dark counts): {self.baseline_sbr}")
         print(f"Average SBR with timegating: {self.sbr_timegated}")
         print("*****************************")
 
@@ -358,8 +418,18 @@ class MINFLUXAnalysis():
         # compute background photons per localization bin, per pulse
         self.bckg_ph_perloc_perpulse = np.empty(NUM_PULSES, dtype=float)
         for pulse_idx in range(NUM_PULSES):
-            self.bckg_ph_perloc_perpulse[pulse_idx] = self.tcspc_data.bckg_counts_timegated_perpulse[pulse_idx] * self.locs_t_binning_s
-            print(f"Expected background photons per localization for pulse {pulse_idx + 1}: {self.bckg_ph_perloc_perpulse[pulse_idx]}")
+            if not self.tcspc_data.use_dark_cnts_choice:
+                self.bckg_ph_perloc_perpulse[pulse_idx] = self.tcspc_data.bckg_counts_timegated_perpulse[pulse_idx] * self.locs_t_binning_s
+                print(f"Expected background photons per localization for pulse {pulse_idx + 1}: {self.bckg_ph_perloc_perpulse[pulse_idx]}")
+            else:
+                self.bckg_dark_cnts_ph_perloc_perpulse = (self.tcspc_data.bckg_dark_cnts_timegated / NUM_PULSES) /self.locs_t_binning_s
+                self.bckg_ph_perloc_perpulse[pulse_idx] = ((self.tcspc_data.baseline_bckg_cnts_timegated_perpulse[pulse_idx] /
+                                                           (self.tcspc_data.sgnl_cnts_forbaseline_sbr_timegated - self.tcspc_data.bckg_dark_cnts_timegated) *
+                                                           (self.tcspc_data.tot_counts_timegated - self.tcspc_data.bckg_dark_cnts_timegated)) /
+                                                           self.locs_t_binning_s +
+                                                           self.bckg_dark_cnts_ph_perloc_perpulse) 
+                print(f"Expected background photons per localization for pulse {pulse_idx + 1}: {self.bckg_ph_perloc_perpulse[pulse_idx]}")
+                print(f"Of which from dark counts: {self.bckg_dark_cnts_ph_perloc_perpulse}")
         
     def calc_ph_perloc_perpulse(self):
         """
@@ -791,7 +861,7 @@ if __name__ == "__main__":
             print("No previous result file found...")
         print("Executing full analysis.")
         # execute full analysis if no previous result file is found
-        tcspc_data = TCSPCData(tcspc_file, bckg_file, timetrace_bin_width_s, τ)
+        tcspc_data = TCSPCData(tcspc_file, bckg_file, bckg_file_dark_cnts_file, timetrace_bin_width_s, τ)
         minflux_analysis = MINFLUXAnalysis(ebp, tcspc_data, target_n_ph)
         locs_filepath_list.append(minflux_analysis.locs_results_filepath)
         result_filenumber_chosen = -1
