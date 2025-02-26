@@ -53,12 +53,13 @@ from configvar import (
 
 plt.close('all')
 
-
-date = '20250224'
+date = '20250226'
 #tcspc_filename = 'clock_20250214-152357_.npy'
+tcspc_filename = 'SM_4steps__20250225-155333_.npy'
 #tcspc_filename = 'psf_center0_fit_and_move_100px_20250220-204338_.npy'
-tcspc_filename = 'SM_4steps__20250224-155635_.npy'
-tcspc_filename = 'SM_4steps__20250224-155225_.npy'
+#tcspc_filename = 'SM_4steps__20250224-155635_.npy'
+#tcspc_filename = 'SM_4steps__20250224-155225_.npy'
+tcspc_filename = 'SM4steps_20250226-113131_.npy'
 bckg_filename = 'bead_bkg_20250220-205458_.npy'
 bckg_dark_cnts_filename = 'bckg_dark_cnts__20250224-162247_.npy'
 psf_dir = PSF_DIR_BASE / date
@@ -334,10 +335,10 @@ class TCSPCData():
         which will be used for analysis. Also, it computes the corrected background counts and sbr using timegating
         """
         self.abs_time_s_foranalysis_perpulse = []
-        self.bckg_counts_timegated_perpulse = np.empty(NUM_PULSES, dtype=float)
+        self.bckg_counts_timegated_perpulse = np.empty(NUM_PULSES, dtype=np.float64)
         if self.use_dark_cnts_choice:
-            self.sgnl_cnts_forbaseline_sbr_timegated_perpulse = np.empty(NUM_PULSES, dtype=float)
-            self.bckg_dark_counts_timegated_perpulse = np.empty(NUM_PULSES, dtype=float)
+            self.sgnl_cnts_forbaseline_sbr_timegated_perpulse = np.empty(NUM_PULSES, dtype=np.float64)
+            self.bckg_dark_counts_timegated_perpulse = np.empty(NUM_PULSES, dtype=np.float64)
         self.tot_counts_timegated = 0
 
         for pulse_idx in range(NUM_PULSES):
@@ -367,7 +368,7 @@ class TCSPCData():
                         self.sgnl_for_baseline_sbr_rel_time_ns > start_win,
                         self.sgnl_for_baseline_sbr_rel_time_ns < end_win,
                     )
-                ]) / self.tot_t_measuring_bckg_dark_cnts_s
+                ]) / (self.emitter_stop_t_s - self.start_t_s_forbaseline_bckg)
                 self.bckg_dark_counts_timegated_perpulse[pulse_idx] = len(self.bckg_dark_cnts_abs_time_s[
                     np.logical_and(
                         self.bckg_dark_cnts_rel_time_shift_ns > start_win,
@@ -380,7 +381,7 @@ class TCSPCData():
             self.bckg_dark_cnts_timegated = np.sum(self.bckg_dark_counts_timegated_perpulse)
             self.baseline_bckg_cnts_timegated_perpulse = self.bckg_counts_timegated_perpulse - self.bckg_dark_cnts_timegated / NUM_PULSES
             self.baseline_bckg_cnts_timegated = np.sum(self.baseline_bckg_cnts_timegated_perpulse)
-            self.baseline_sbr = (self.bckg_dark_cnts_timegated - self.bckg_dark_cnts_timegated) / self.baseline_bckg_cnts_timegated - 1
+            self.baseline_sbr = (self.sgnl_cnts_forbaseline_sbr_timegated - self.bckg_dark_cnts_timegated) / self.baseline_bckg_cnts_timegated - 1
         # total emitter photons used for analysis
         self.emitter_counts_timegated = self.tot_counts_timegated - self.bckg_counts_timegated
         # real SBR
@@ -393,6 +394,7 @@ class TCSPCData():
         if self.use_dark_cnts_choice:
             print(f"Of which from dark counts: {self.bckg_dark_cnts_timegated}")
             print(f"Baseline SBR (without dark counts): {self.baseline_sbr}")
+            print(f"Average signal counts for baseline SBR calculation: {self.sgnl_cnts_forbaseline_sbr_timegated}")
         print(f"Average SBR with timegating: {self.sbr_timegated}")
         print("*****************************")
 
@@ -416,16 +418,16 @@ class MINFLUXAnalysis():
         self.avg_n_ph_perloc = self.tcspc_data.tot_counts_timegated * self.locs_t_binning_s
         print(f"Average number of photons per localization: {self.avg_n_ph_perloc}")
         # compute background photons per localization bin, per pulse
-        self.bckg_ph_perloc_perpulse = np.empty(NUM_PULSES, dtype=float)
+        self.bckg_ph_perloc_perpulse = np.empty(NUM_PULSES, dtype=np.float64)
         for pulse_idx in range(NUM_PULSES):
             if not self.tcspc_data.use_dark_cnts_choice:
                 self.bckg_ph_perloc_perpulse[pulse_idx] = self.tcspc_data.bckg_counts_timegated_perpulse[pulse_idx] * self.locs_t_binning_s
                 print(f"Expected background photons per localization for pulse {pulse_idx + 1}: {self.bckg_ph_perloc_perpulse[pulse_idx]}")
             else:
-                self.bckg_dark_cnts_ph_perloc_perpulse = (self.tcspc_data.bckg_dark_cnts_timegated / NUM_PULSES) /self.locs_t_binning_s
+                self.bckg_dark_cnts_ph_perloc_perpulse = (self.tcspc_data.bckg_dark_cnts_timegated / NUM_PULSES) * self.locs_t_binning_s
                 self.bckg_ph_perloc_perpulse[pulse_idx] = ((self.tcspc_data.baseline_bckg_cnts_timegated_perpulse[pulse_idx] /
                                                            (self.tcspc_data.sgnl_cnts_forbaseline_sbr_timegated - self.tcspc_data.bckg_dark_cnts_timegated) *
-                                                           (self.tcspc_data.tot_counts_timegated - self.tcspc_data.bckg_dark_cnts_timegated)) /
+                                                           (self.tcspc_data.tot_counts_timegated - self.tcspc_data.bckg_dark_cnts_timegated)) *
                                                            self.locs_t_binning_s +
                                                            self.bckg_dark_cnts_ph_perloc_perpulse) 
                 print(f"Expected background photons per localization for pulse {pulse_idx + 1}: {self.bckg_ph_perloc_perpulse[pulse_idx]}")
@@ -437,9 +439,9 @@ class MINFLUXAnalysis():
         alltogether, and the SBR for each localization
         """
         # compute histograms of photons for each pulse using the chosen time binning
-        self.locs_bin_edges = np.arange(self.tcspc_data.start_t_s, self.tcspc_data.emitter_stop_t_s, self.locs_t_binning_s)
+        self.locs_bin_edges = np.arange(self.tcspc_data.start_t_s, np.min((self.tcspc_data.end_t_s, self.tcspc_data.emitter_stop_t_s)), self.locs_t_binning_s)
         print(f"Total number of localizations: {len(self.locs_bin_edges) - 1}")
-        self.ph_perloc_perpulse = np.empty((NUM_PULSES, len(self.locs_bin_edges) - 1), dtype=int)
+        self.ph_perloc_perpulse = np.empty((NUM_PULSES, len(self.locs_bin_edges) - 1), dtype=np.int64)
         for pulse_idx in range(NUM_PULSES):
             self.ph_perloc_perpulse[pulse_idx, :], _ = np.histogram(self.tcspc_data.abs_time_s_foranalysis_perpulse[pulse_idx], self.locs_bin_edges)
         self.ph_perloc_allpulses = np.sum(self.ph_perloc_perpulse, axis=0)
@@ -574,6 +576,7 @@ class DataPostProcessor():
         """
         This function computes the crb based on the experimental SBR and average photon number (averaging x and y errors)
         """
+        print(f"Computing CRB with {ph_perloc} photons and {sbr} of SBR")
         self.σ_CRB = crb_minflux(NUM_PULSES, self.ebp.psf_fits, sbr, STEP_NM, self.ebp.size_nm, ph_perloc, method='1')
      
     def plot_crb_andebp(self):
@@ -670,6 +673,33 @@ class DataPostProcessor():
         plt.title('σ_CRB with Aligned Reference Frame')
         plt.tight_layout()
         plt.show()
+       
+class SMOrigamiAnalysis():
+    def __init__(self, post_proc_data: DataPostProcessor, locs_filepath: Path, tcspc_data_dir: Path):
+        self.post_proc_data = post_proc_data
+        self.locs_filepath = locs_filepath
+        self.tcspc_data_dir = tcspc_data_dir
+        self.fit_cloud(self.post_proc_data.locs_centered)
+        
+    def fit_cloud(self, locs):
+        """
+        Simple 2D gaussian fit of a cloud of points, it prints center, sigma and CRB in the center
+        """
+        gmm = GaussianMixture(n_components=1, covariance_type='full')
+        gmm.fit(locs[:, 1:3])  # Fit on (x, y) coordinates
+
+        # Extract means and covariances
+        means = gmm.means_  # Shape (2, 2), centers of the Gaussians
+        covariances = gmm.covariances_  # Shape (2, 2, 2), full covariance matrices
+
+        # Compute standard deviations (σ) from covariance matrix
+        sigmas = np.sqrt(np.array([np.diag(cov) for cov in covariances]))
+        print(f"Center: {means[0]}")
+        print(f"Sigma: {sigmas[0]}")
+        print(f"CRB in cloud center: {self.post_proc_data.σ_CRB[
+            int(self.post_proc_data.ebp.pos_mins_nm[0][1] + means[0][1]),
+            int(self.post_proc_data.ebp.pos_mins_nm[0][0] + means[0][0])
+            ]}")
         
 class ClockOrigamiAnalysis():
     def __init__(self, post_proc_data: DataPostProcessor, locs_filepath: Path, tcspc_data_dir: Path):
@@ -684,6 +714,7 @@ class ClockOrigamiAnalysis():
         self.hidden_states, self.hidden_states_rescaled = self.hmm_fit(self.locs_zeroavg_rotated)
         self.calc_clock_times(self.locs_zeroavg_rotated, self.hidden_states)
         self.locs_hmmfilt = self.hmm_filter(self.post_proc_data.locs_centered, self.hidden_states)
+        self.locs_rotated_hmmfilt = self.hmm_filter(self.locs_zeroavg_rotated, self.hidden_states)
         # repeat fits with HMM-filtered data
         self.post_proc_data.plot_locs_withcrb(self.locs_hmmfilt)
         self.post_proc_data.plot_loc_density_withebp(self.locs_hmmfilt)
@@ -775,7 +806,7 @@ class ClockOrigamiAnalysis():
         plt.legend()
         plt.show()
         # prepare array with rotated localizations and HMM result (rescaled)
-        self.rotated_clock_trace = np.empty((len(locs[:, 0]), 3), dtype=float)
+        self.rotated_clock_trace = np.empty((len(locs[:, 0]), 3), dtype=np.float64)
         self.rotated_clock_trace[:, 0] = locs[:, 0]
         self.rotated_clock_trace[:, 1] = locs[:, 1]
         self.rotated_clock_trace[:, 2] = hidden_states_rescaled
@@ -810,7 +841,7 @@ class ClockOrigamiAnalysis():
         print(f"HMM filtering discarded {locs_beforefilt - locs_afterfilt} localizations")
         print(f"{locs_afterfilt} localizations remaining ({int(locs_afterfilt / locs_beforefilt * 100)}%)")
         
-        self.locs_hmmfilts_filename = self.locs_filepath.stem + '_HMMfilt.npy'
+        self.locs_hmmfilts_filename = self.locs_filepath.stem + '_HMMfilt_rotated.npy'
         self.locs_hmmfilts_filepath = self.tcspc_data_dir / self.locs_hmmfilts_filename
         np.save(self.locs_hmmfilts_filepath, locs_hmmfilt)
         return locs_hmmfilt
@@ -867,7 +898,11 @@ if __name__ == "__main__":
         result_filenumber_chosen = -1
     locs_dens_hist_bin_size = 1
     postproc = DataPostProcessor(locs_filepath_list[result_filenumber_chosen], ebp, locs_dens_hist_bin_size)
-    clock_analysis_choice = input("Do you want to perform the analysis for the clock origami? (y/n) ")
-    if clock_analysis_choice == 'y':
-        clock_analysis = ClockOrigamiAnalysis(postproc, locs_filepath_list[result_filenumber_chosen], data_dir)
+    sm_analysis_choice = input("Do you want to perform the analysis for the SM origami? (y/n) ")
+    if sm_analysis_choice == 'y':
+        sm_analysis = SMOrigamiAnalysis(postproc, locs_filepath_list[result_filenumber_chosen], data_dir)
+    else:
+        clock_analysis_choice = input("Do you want to perform the analysis for the clock origami? (y/n) ")
+        if clock_analysis_choice == 'y':
+            clock_analysis = ClockOrigamiAnalysis(postproc, locs_filepath_list[result_filenumber_chosen], data_dir)
 
