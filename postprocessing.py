@@ -11,9 +11,10 @@ from configvar import (
 from ebp import EBP
 
 class DataPostProcessor():
-    def __init__(self, locs_filepath: Path, drift_data_filepath: Path, ebp: EBP, bin_size: int, use_drift_data_choice: bool):
+    def __init__(self, locs_filepath: Path, drift_data_filepath: Path, t_start_filepath: Path, ebp: EBP, bin_size: int, use_drift_data_choice: bool):
         self.locs_filepath = locs_filepath
         self.drift_data_filepath = drift_data_filepath
+        self.t_start_filepath = t_start_filepath
         self.ebp = ebp
         self.bin_size = bin_size
         self.use_drift_data_choice = use_drift_data_choice
@@ -23,6 +24,8 @@ class DataPostProcessor():
         if self.use_drift_data_choice:
             # open file with drift data for a posteriori drift correction
             self.drift_data = self.prepare_drift_data(self.drift_data_filepath)
+            # correct a posteriori localizations with drift data
+            self.locs = self.apost_drift_locs_corr(self.locs, self.drift_data)
         # eliminate spatial outliers from localizations
         self.locs_nooutliers = self.eliminate_outliers(self.locs)
         # now filter localizations based on photons numbers
@@ -71,13 +74,20 @@ class DataPostProcessor():
         """
         This function loads and prepare drift data for a posteriori correction
         """
-
         # Load the .npy files into numpy arrays
         xyvst = self.load_takyaq_data(drift_data_filepath)
 
         # Extract time data
         t = xyvst['t']
-        t = t - t[0]
+        
+        # get absolute time of start TCSPC measurement to correct offset
+        with open(self.t_start_filepath) as ff:
+            t_tcspc_start_s = float(ff.read())
+        t_drift_data_start_s = t[0]
+        
+        # set correct offset in time
+        t = t - t[0] - t_tcspc_start_s + t_drift_data_start_s
+
         # Automatically detect the number of columns in xyvst['xy']
         n_columns = xyvst['xy'].shape[1]  # Number of columns
 
@@ -99,6 +109,22 @@ class DataPostProcessor():
         y_avg = np.mean(y_data, axis=1)  # Average across columns (axis=1)
 
         return np.stack((t, x_avg, y_avg))
+        
+    def apost_drift_locs_corr(self, locs, drift_data):
+        """
+        This function uses the data of the xy drift to correct a posteriori the MINFLUX localizations. For each localization
+        it uses the closest (in time) datapoint of the drift
+        """
+        last_closest_t_idx = 0
+        for loc_idx in range(len(locs[:, 0])):
+            for t_drift_idx in range(last_closest_t_idx, len(drift_data[0])):
+                if drift_data[0][t_drift_idx] > locs[loc_idx, 0]:
+                    # to start search from here for next point
+                    last_closest_t_idx = t_drift_idx - 1
+                    locs[loc_idx, 1] -= drift_data[1][t_drift_idx - 1]
+                    locs[loc_idx, 2] -= drift_data[2][t_drift_idx - 1]
+                    break
+        return locs
         
     def eliminate_outliers(self, locs):
         """

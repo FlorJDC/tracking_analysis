@@ -27,7 +27,6 @@ class EBP():
             if filepath.is_file():
                 if filepath.suffix == '.npy':
                     psf_fit = np.load(filepath)
-                    psf_fit -= 5
                     psf_fit_list.append(psf_fit)
                     psf_size = np.shape(psf_fit)[1]
                     self.size_nm = psf_size * STEP_NM

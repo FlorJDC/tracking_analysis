@@ -7,7 +7,7 @@ from configvar import (
     LASER_PERIOD_NS,
     NUM_PULSES,
     LIFETIME_WIN_BEG_NS,
-    LIFETIME_WIN_END_NS,
+    LIFETIME_WIN_END_NS
 )
 
 
@@ -174,7 +174,7 @@ class TCSPCData():
         
         plt.figure('Emitter TCSPC Histogram')
         plt.hist(self.filt_rel_time_shift_ns, bins = 300, range=(0,50), label='arrival time (shifted)', alpha=0.7)
-        for tau in τ:
+        for tau in self.τ:
             plt.axvline(tau, color='red', linestyle='--')
             plt.axvspan(tau + LIFETIME_WIN_BEG_NS, tau + LIFETIME_WIN_END_NS, color='red', alpha=0.2)
         plt.xlabel('Time [ns]')
@@ -185,7 +185,7 @@ class TCSPCData():
         
         plt.figure('Background TCSPC Histogram')
         plt.hist(self.bckg_rel_time_shift_ns, bins = 300, range=(0,50), label= 'arrival time (shifted)', alpha=0.7)
-        for tau in τ:
+        for tau in self.τ:
             plt.axvline(tau, color='red', linestyle='--')
             plt.axvspan(tau + LIFETIME_WIN_BEG_NS, tau + LIFETIME_WIN_END_NS, color='red', alpha=0.2)
         plt.xlabel('Time [ns]')
@@ -208,8 +208,8 @@ class TCSPCData():
 
         for pulse_idx in range(NUM_PULSES):
             # computing start and end of the time window used for timegating for the current pulse
-            start_win = τ[pulse_idx] + LIFETIME_WIN_BEG_NS
-            end_win = τ[pulse_idx] + LIFETIME_WIN_END_NS
+            start_win = self.τ[pulse_idx] + LIFETIME_WIN_BEG_NS
+            end_win = self.τ[pulse_idx] + LIFETIME_WIN_END_NS
             # selecting all the photons used for analysis for the current pulse
             abs_time_s_foranalysis = self.filt_abs_time_s[
                 np.logical_and(

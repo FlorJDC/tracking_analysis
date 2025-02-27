@@ -1,3 +1,4 @@
+import numpy as np
 from pathlib import Path
 
 TCSPC_TIME_OFFSET_NS = 15.8
@@ -12,3 +13,4 @@ DATA_DIR_BASE = Path('testdata') / 'measurement'
 LOCS_FILE_SUFFIX = "_locs_"
 SIGMA_TOL_OUTLIERS = 3.0
 COLOR_LIST = ['blue', 'orange', 'gray', 'yellow']
+PULSES_POS_NS = np.array([0.98, 13.8, 26.12, 39.1])  # [ns] 

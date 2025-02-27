@@ -34,6 +34,7 @@ from configvar import (
     PSF_DIR_BASE,
     DATA_DIR_BASE,
     LOCS_FILE_SUFFIX,
+    PULSES_POS_NS
 )
 from ebp import EBP
 from tcspcdata import TCSPCData
@@ -44,23 +45,19 @@ from origamianalysis import SMOrigamiAnalysis, ClockOrigamiAnalysis
 
 plt.close('all')
 
-date = '20250214'
+date = '20250227'
 
 # TCSPC data file
-#tcspc_filename = 'origami_fit_and_move__20250221-182758_.npy'
-#tcspc_filename = 'origami_fit_and_move_20250221-183456_.npy'
-#tcspc_filename = 'origami_fit_and_move_20250221-184353_.npy'
-tcspc_filename = 'clock_20250214-152357_.npy'
-#tcspc_filename = 'SM_4steps__20250225-155333_.npy'
-#tcspc_filename = 'psf_center0_fit_and_move_100px_20250220-204338_.npy'
-#tcspc_filename = 'SM_4steps__20250224-155635_.npy'
-#tcspc_filename = 'SM_4steps__20250224-155225_.npy'
-#tcspc_filename = 'SM4steps_20250226-113131_.npy'
+# clocks not stabilized
+tcspc_filename = 'clock_A_manual_dritf_20250227-130207_.npy'
+# nice clock stabilized
+#tcspc_filename = 'clock_20250214-152357_.npy'
 
 # Drift data for a posteriori correction (not always used!)
-#drift_data_filename = 'xy_data20250221T18-27-56.npy'
-#drift_data_filename = 'xy_data20250221T18-34-55.npy'
-drift_data_filename = 'xy_data20250221T18-43-51.npy'
+drift_data_filename = 'xy_data20250227T13-02-04.npy'
+
+# Absolute time for the start of the TCSPC measurement
+t_start_filename = 'clock_A_manual_dritf_20250227-130207_t_start.txt'
 
 # Data for background estimation when there's no bleaching (not always used!)
 bckg_filename = 'bead_bkg_20250220-205458_.npy'
@@ -72,9 +69,9 @@ psf_dir = PSF_DIR_BASE / date
 data_dir = DATA_DIR_BASE / date
 tcspc_file = data_dir / tcspc_filename
 drift_data_filepath = data_dir / drift_data_filename
+t_start_filepath = data_dir / t_start_filename
 bckg_file = data_dir / bckg_filename
 bckg_file_dark_cnts_file = DIR_BASE / bckg_dark_cnts_filename
-τ = np.array([0.98, 13.8, 26.12, 39.1])  # [ns] 
 timetrace_bin_width_s = 0.1
 target_n_ph = 1700
 
@@ -99,7 +96,7 @@ if __name__ == "__main__":
             print("No previous result file found...")
         print("Executing full analysis.")
         # execute full analysis if no previous result file is found
-        tcspc_data = TCSPCData(tcspc_file, bckg_file, bckg_file_dark_cnts_file, timetrace_bin_width_s, τ)
+        tcspc_data = TCSPCData(tcspc_file, bckg_file, bckg_file_dark_cnts_file, timetrace_bin_width_s, PULSES_POS_NS)
         minflux_analysis = MINFLUXAnalysis(ebp, tcspc_data, target_n_ph)
         locs_filepath_list.append(minflux_analysis.locs_results_filepath)
         result_filenumber_chosen = -1
@@ -109,7 +106,7 @@ if __name__ == "__main__":
         use_drift_data_choice = True
     else:
         use_drift_data_choice = False
-    postproc = DataPostProcessor(locs_filepath_list[result_filenumber_chosen], drift_data_filepath, ebp, locs_dens_hist_bin_size, use_drift_data_choice)
+    postproc = DataPostProcessor(locs_filepath_list[result_filenumber_chosen], drift_data_filepath, t_start_filepath, ebp, locs_dens_hist_bin_size, use_drift_data_choice)
     sm_analysis_choice = input("Do you want to perform the analysis for the SM origami? (y/n) ")
     if sm_analysis_choice == 'y':
         sm_analysis = SMOrigamiAnalysis(postproc, locs_filepath_list[result_filenumber_chosen], data_dir)
