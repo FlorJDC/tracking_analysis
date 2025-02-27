@@ -11,3 +11,4 @@ PSF_DIR_BASE = Path('testdata') / 'psf'
 DATA_DIR_BASE = Path('testdata') / 'measurement'
 LOCS_FILE_SUFFIX = "_locs_"
 SIGMA_TOL_OUTLIERS = 3.0
+COLOR_LIST = ['blue', 'orange', 'gray', 'yellow']
