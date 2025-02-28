@@ -124,6 +124,9 @@ class DataPostProcessor():
                     locs[loc_idx, 1] -= drift_data[1][t_drift_idx - 1]
                     locs[loc_idx, 2] -= drift_data[2][t_drift_idx - 1]
                     break
+        self.locs_driftcorr_results_filename = self.locs_filepath.stem + '_driftcorr_'  + '.npy'
+        self.locs_driftcorr_results_filepath = self.locs_filepath.parent / self.locs_driftcorr_results_filename
+        np.save(self.locs_driftcorr_results_filepath, self.locs)
         return locs
         
     def eliminate_outliers(self, locs):
@@ -235,7 +238,9 @@ class DataPostProcessor():
         plt.figure('Time-encoded localizations')
         for beam_idx, min_pos in enumerate(self.ebp.pos_mins_centered_nm):
             plt.scatter(*min_pos, color=self.ebp.psf_colors[beam_idx], s=100)
-        plt.scatter(locs[:, 1], locs[:, 2], c=range(len(locs[:, 0])), cmap='rainbow', s=20, alpha=0.2)
+        plt.scatter(locs[:, 1], locs[:, 2], c=(locs[:, 0] - locs[0, 0]), cmap='rainbow', s=20, alpha=0.05)
+        color_bar = plt.colorbar(label="Time [s]", orientation="vertical")
+        color_bar.solids.set(alpha=1)
         plt.xlim(self.x_plot_range)
         plt.ylim(self.y_plot_range)
         # Annotations

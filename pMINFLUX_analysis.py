@@ -49,15 +49,15 @@ date = '20250227'
 
 # TCSPC data file
 # clocks not stabilized
-tcspc_filename = 'clock_A_manual_dritf_20250227-130207_.npy'
+tcspc_filename = 'clock_G_drift_20250227-165924_.npy'
 # nice clock stabilized
 #tcspc_filename = 'clock_20250214-152357_.npy'
 
 # Drift data for a posteriori correction (not always used!)
-drift_data_filename = 'xy_data20250227T13-02-04.npy'
+drift_data_filename = 'xy_data20250227T16-59-21.npy'
 
 # Absolute time for the start of the TCSPC measurement
-t_start_filename = 'clock_A_manual_dritf_20250227-130207_t_start.txt'
+t_start_filename = 'clock_G_drift_20250227-165924_t_start.txt'
 
 # Data for background estimation when there's no bleaching (not always used!)
 bckg_filename = 'bead_bkg_20250220-205458_.npy'
