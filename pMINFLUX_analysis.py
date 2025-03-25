@@ -3,7 +3,8 @@
 Created on Wed Nov 13 17:33:49 2024
 
 Author: Lucía Lopez
-Florencia D. Choque 
+Florencia D. Choque
+Giovanni Ferrari
 Description:
 This script processes experimental pMINFLUX data using fitted point spread functions (PSFs) and TCSPC data.
 At this stage, the MINFLUX excitation pattern has already been aligned, and the distances between the minima of the pattern 
