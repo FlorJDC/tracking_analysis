@@ -80,12 +80,12 @@ def pos_minflux(n, normed_psfs, sbr, bckg_contrib, step_nm):
     """
 
     # FOV size
-    size = np.shape(normed_psfs)[1] 
+    size = np.shape(normed_psfs)[1]
     
     # probabilitiy vector 
     p = np.zeros((NUM_PULSES, size, size))
 
-    for pulse_idx in np.arange(NUM_PULSES):        
+    for pulse_idx in np.arange(NUM_PULSES):
         p[pulse_idx,:,:] = (sbr/(sbr + 1)) * normed_psfs[pulse_idx,:,:] + (1/(sbr + 1)) * bckg_contrib[pulse_idx]
 
     # likelihood function
