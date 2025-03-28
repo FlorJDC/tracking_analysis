@@ -135,7 +135,6 @@ def loc_trace_minflux(ph_perloc_perpulse, bckg_ph_perloc_perpulse, sbr_perloc, p
 def crb_minflux(NUM_PULSES, PSF, SBR, px_nm, size_nm, N, method='1'):
     
     """
-    
     Cramer-Rao Bound for a given MINFLUX experiment 
     
     Input

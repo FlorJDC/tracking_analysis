@@ -171,9 +171,8 @@ class TCSPCData():
         self.bckg_rel_time_shift_ns = (self.bckg_rel_time_ns - TCSPC_TIME_OFFSET_NS) % LASER_PERIOD_NS
         if self.use_dark_cnts_choice:
             self.bckg_dark_cnts_rel_time_shift_ns = (self.bckg_dark_cnts_rel_time_ns - TCSPC_TIME_OFFSET_NS) % LASER_PERIOD_NS
-        
         plt.figure('Emitter TCSPC Histogram')
-        plt.hist(self.filt_rel_time_shift_ns, bins = 300, range=(0,50), label='arrival time (shifted)', alpha=0.7)
+        plt.hist(self.filt_rel_time_shift_ns, bins = 300, range=(0,50), label='Arrival time (shifted)', alpha=0.7)
         for tau in self.τ:
             plt.axvline(tau, color='red', linestyle='--')
             plt.axvspan(tau + LIFETIME_WIN_BEG_NS, tau + LIFETIME_WIN_END_NS, color='red', alpha=0.2)
@@ -254,8 +253,8 @@ class TCSPCData():
             
         print("*****************************")
         print("Measure parameters after TCSPC timegating:")
-        print(f"Signal counts used for analysis: {self.emitter_counts_timegated}")
-        print(f"Background counts for all pulses: {self.bckg_counts_timegated}")
+        print(f"Signal counts used for analysis: {self.emitter_counts_timegated} Hz")
+        print(f"Background counts for all pulses: {self.bckg_counts_timegated} Hz")
         if self.use_dark_cnts_choice:
             print(f"Of which from dark counts: {self.bckg_dark_cnts_timegated}")
             print(f"Baseline SBR (without dark counts): {self.baseline_sbr}")
