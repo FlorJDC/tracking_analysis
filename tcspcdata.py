@@ -173,7 +173,7 @@ class TCSPCData():
             self.bckg_dark_cnts_rel_time_shift_ns = (self.bckg_dark_cnts_rel_time_ns - TCSPC_TIME_OFFSET_NS) % LASER_PERIOD_NS
         
         plt.figure('Emitter TCSPC Histogram')
-        plt.hist(self.filt_rel_time_shift_ns, bins = 300, range=(0,50), label='arrival time (shifted)', alpha=0.7)
+        plt.hist([self.filt_rel_time_shift_ns,self.rel_time_ns], bins = 300, range=(0,50), label=['arrival time (shifted)', 'No shifted'], alpha=0.7)
         for tau in self.τ:
             plt.axvline(tau, color='red', linestyle='--')
             plt.axvspan(tau + LIFETIME_WIN_BEG_NS, tau + LIFETIME_WIN_END_NS, color='red', alpha=0.2)

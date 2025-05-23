@@ -58,7 +58,7 @@ def likelihood(NUM_PULSES, PSF, n, λb, pos_nm, step_nm, size_nm):
         
     return Like
 
-def pos_minflux(n, normed_psfs, sbr, bckg_contrib, step_nm):
+def pos_minflux(n, psfs, psf_norm, sbr, bckg_contrib, step_nm):
     
     """    
     MINFLUX position estimator (using MLE) for a single localization
@@ -78,9 +78,12 @@ def pos_minflux(n, normed_psfs, sbr, bckg_contrib, step_nm):
     step_nm : grid step in nm
         
     """
-
+    normed_psfs = psfs / psf_norm
     # FOV size
     size = np.shape(normed_psfs)[1]
+    #FIXME check if this is correct, sbr_rel=1 in the center =1
+    sbr_rel = np.sum(psfs, axis=0)/np.sum(psfs, axis=0)[int(size/2), int(size/2)]
+    sbr = sbr_rel*sbr
     
     # probabilitiy vector 
     p = np.zeros((NUM_PULSES, size, size))
@@ -129,7 +132,7 @@ def loc_trace_minflux(ph_perloc_perpulse, bckg_ph_perloc_perpulse, sbr_perloc, p
     bckg_contrib = bckg_ph_perloc_perpulse / tot_bckg_ph_inloc
     locs = np.empty((n_loc, 2), dtype=float)
     for loc_idx in range(n_loc):
-        locs[loc_idx, :] = pos_minflux(ph_perloc_perpulse[:, loc_idx], normed_psfs, sbr_perloc[loc_idx], bckg_contrib, step_nm)
+        locs[loc_idx, :] = pos_minflux(ph_perloc_perpulse[:, loc_idx], psfs, psf_norm, sbr_perloc[loc_idx], bckg_contrib, step_nm)
     return locs
 
 def crb_minflux(NUM_PULSES, PSF, SBR, px_nm, size_nm, N, method='1'):

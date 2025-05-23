@@ -1,6 +1,12 @@
 from copy import deepcopy
 import numpy as np
 import matplotlib.pyplot as plt
+from sklearn.mixture import GaussianMixture
+from sklearn.cluster import KMeans
+import matplotlib.patches as patches
+from matplotlib.patches import Ellipse
+
+
 from pathlib import Path
 from loc_tools import crb_minflux
 from configvar import (
@@ -27,7 +33,7 @@ class DataPostProcessor():
             # correct a posteriori localizations with drift data
             self.locs = self.apost_drift_locs_corr(self.locs, self.drift_data)
         # eliminate spatial outliers from localizations
-        self.locs_nooutliers = self.eliminate_outliers(self.locs)
+        self.locs_nooutliers = self.locs #self.eliminate_outliers(self.locs)
         # now filter localizations based on photons numbers
         self.locs_filt = self.filter_locs_forph(self.locs_nooutliers)
         # compute average photon number and SBR based on filtered localizations
@@ -43,6 +49,7 @@ class DataPostProcessor():
         self.plot_locs_timecoded_withebp(self.locs_centered)
         self.plot_loc_density_withebp(self.locs_centered)
         self.plot_locs_withcrb(self.locs_centered)
+        # self.plot_locs_gmm_filtered(self.locs_centered)
         
     def load_locs(self, locs_filepath):
         """
@@ -243,6 +250,9 @@ class DataPostProcessor():
         color_bar.solids.set(alpha=1)
         plt.xlim(self.x_plot_range)
         plt.ylim(self.y_plot_range)
+        plt.xlabel('x (nm)', fontsize = 14)
+        plt.ylabel('y (nm)', fontsize = 14)
+        
         # Annotations
         plt.gca().set_aspect('equal'), plt.xlabel('x (nm)'), plt.ylabel('y (nm)'), plt.tight_layout()
         plt.show()
@@ -264,7 +274,7 @@ class DataPostProcessor():
         # Annotations
         plt.gca().set_aspect('equal'), plt.xlabel('x (nm)'), plt.ylabel('y (nm)'), plt.tight_layout()
         plt.show()
-        
+
     def plot_locs_withcrb(self, locs):
         """
         This function plots the localizations superimposed with the CRB map
@@ -298,3 +308,219 @@ class DataPostProcessor():
         plt.title('σ_CRB with Aligned Reference Frame')
         plt.tight_layout()
         plt.show()
+
+    def plot_locs_gmm_filtered(self, locs, n_components=20, sigma_threshold=1.5):
+        """
+        Plots two separate figures:
+        - One with time-encoded localizations.
+        - One with cloud numbers (labels) overlaid on the centers of each cloud.
+        - Additionally, a third figure comparing the localizations with their covariance ellipses.
+        """
+        # Extraer coordenadas y tiempos
+        x, y = locs[:, 1], locs[:, 2]
+        times = locs[:, 0] - locs[0, 0]  # Tiempo relativo
+        data = np.column_stack((x, y))
+    
+        # Preprocesamiento con KMeans para inicializar los centros
+        kmeans = KMeans(n_clusters=n_components, random_state=42)
+        kmeans.fit(data)
+    
+        # Ajustar GMM con n_components y centros iniciales de KMeans
+        gmm = GaussianMixture(n_components=n_components, covariance_type='full', random_state=42, 
+                              init_params='kmeans')
+        gmm.fit(data)
+        labels = gmm.predict(data)
+    
+        # Obtener medias y desviaciones estándar
+        means = gmm.means_
+        covariances = gmm.covariances_
+        sigmas = np.sqrt(np.array([np.diag(cov) for cov in covariances]))  # σ_x, σ_y
+    
+        # Calcular el promedio de tiempo para cada nube (grupo)
+        avg_times = []
+        for i in range(n_components):
+            mask = (labels == i)
+            avg_times.append(np.mean(times[mask]))
+    
+        # Ordenar los índices de las nubes por el promedio de tiempo
+        sorted_indices = np.argsort(avg_times)
+    
+        # Imprimir estadísticos de cada nube, ordenadas por tiempo promedio
+        print("Estadísticos de cada nube (ordenadas por tiempo promedio):")
+        for idx in sorted_indices:
+            mu_x, mu_y = means[idx]
+            sigma_x, sigma_y = sigmas[idx]
+            sigma_magnitude = np.sqrt(sigma_x**2 + sigma_y**2)
+            print(f"Nube {idx+1}:")
+            print(f"  Media (mu_x, mu_y): ({mu_x:.2f}, {mu_y:.2f})")
+            print(f"  Desviación estándar (sigma_x, sigma_y): ({sigma_x:.2f}, {sigma_y:.2f})")
+            print(f"  Módulo de sigma: {sigma_magnitude:.2f}\n")
+    
+        # Filtrar puntos dentro de 'sigma_threshold' sigmas de su centro
+        filtered_points = []
+        filtered_times = []
+        for i in range(n_components):
+            mu_x, mu_y = means[i]
+            sigma_x, sigma_y = sigmas[i]
+    
+            # Extraer puntos del cluster
+            mask = (labels == i)
+            x_cluster, y_cluster, t_cluster = x[mask], y[mask], times[mask]
+    
+            # Filtrar por sigma_threshold
+            valid_mask = (
+                (np.abs(x_cluster - mu_x) < sigma_threshold * sigma_x) & 
+                (np.abs(y_cluster - mu_y) < sigma_threshold * sigma_y)
+            )
+            filtered_points.append(np.column_stack((x_cluster[valid_mask], y_cluster[valid_mask])))
+            filtered_times.append(t_cluster[valid_mask])
+    
+        # Unir puntos filtrados
+        filtered_data = np.vstack(filtered_points)
+        filtered_times = np.concatenate(filtered_times)
+    
+        # Figura 1: Gráfico con codificación de tiempo
+        plt.figure('GMM-Filtered Time-Encoded Localizations')
+        # Superponer mínimos del EBP si están disponibles
+        if hasattr(self, 'ebp') and hasattr(self.ebp, 'pos_mins_centered_nm'):
+            for beam_idx, min_pos in enumerate(self.ebp.pos_mins_centered_nm):
+                plt.scatter(*min_pos, color=self.ebp.psf_colors[beam_idx], s=100)
+        plt.scatter(filtered_data[:, 0], filtered_data[:, 1], c=filtered_times, cmap='rainbow', s=20, alpha=0.05)
+    
+        # Barra de color
+        color_bar = plt.colorbar(label="Time [s]", orientation="vertical")
+        color_bar.solids.set(alpha=1)
+    
+        # Ajustar ejes
+        plt.xlim(self.x_plot_range)
+        plt.ylim(self.y_plot_range)
+        plt.gca().set_aspect('equal')
+        plt.xlabel('x (nm)', fontsize=14)
+        plt.ylabel('y (nm)', fontsize=14)
+        #plt.title('GMM-Filtered Time-Encoded Localizations', fontsize=16)
+        plt.tight_layout()
+        plt.show()
+    
+        # Figura 2: Gráfico con numeración de las nubes
+        plt.figure('GMM-Filtered Clouds with Labels')
+    
+        # Graficar los centros de las nubes y etiquetarlas
+        for idx in range(n_components):
+            mu_x, mu_y = means[idx]
+            plt.scatter(mu_x, mu_y, color='steelblue', label=f'Nube {idx+1}', s=30)  # Centro de la nube
+            plt.text(mu_x + 5, mu_y + 5, f'{idx+1}', color='black', fontsize=12)  # Número de la nube
+    
+        # Superponer mínimos del EBP si están disponibles
+        if hasattr(self, 'ebp') and hasattr(self.ebp, 'pos_mins_centered_nm'):
+            for beam_idx, min_pos in enumerate(self.ebp.pos_mins_centered_nm):
+                plt.scatter(*min_pos, color=self.ebp.psf_colors[beam_idx], s=100)
+    
+        # Ajustar ejes
+        plt.xlim(self.x_plot_range)
+        plt.ylim(self.y_plot_range)
+        plt.gca().set_aspect('equal')
+        plt.xlabel('x (nm)', fontsize=14)
+        plt.ylabel('y (nm)', fontsize=14)
+        plt.title('GMM-Filtered Clouds with Labels', fontsize=16)
+        plt.tight_layout()
+        plt.show()
+    
+        # Figura 3: Comparación de las nubes y las elipses
+        plt.figure('Comparison of Clouds with Ellipses and Localizations')
+        for idx in range(n_components):
+            mu_x, mu_y = means[idx]
+            sigma_x, sigma_y = sigmas[idx]
+            
+            # Calcular el módulo de sigma
+            sigma_magnitude = np.sqrt(sigma_x**2 + sigma_y**2)
+    
+            # Extraer las localizaciones de la nube
+            mask = (labels == idx)
+            x_cluster, y_cluster = x[mask], y[mask]
+    
+            # Graficar las localizaciones de la nube
+            plt.scatter(x_cluster, y_cluster, color='powderblue', s=10, alpha=0.3)
+    
+            # Calcular la matriz de covarianza y la orientación
+            covariance = covariances[idx]
+            eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+            axis_lengths = np.sqrt(eigenvalues) * 1.52  # Ajuste del factor de escala
+            orientation = np.arctan2(eigenvectors[1, 0], eigenvectors[0, 0])  # Ángulo de rotación
+    
+            # Graficar la elipse representativa de la nube
+            ellipse = plt.matplotlib.patches.Ellipse(
+                (mu_x, mu_y),  # Centro de la elipse
+                width=axis_lengths[0],  # Eje mayor
+                height=axis_lengths[1],  # Eje menor
+                angle=np.degrees(orientation),  # Ángulo de rotación
+                edgecolor='steelblue',  # Color del borde
+                facecolor='none',  # Sin relleno
+                lw=2  # Grosor del borde
+            )
+            plt.gca().add_patch(ellipse)
+            plt.scatter(mu_x, mu_y, color='steelblue', s=20)  # Centro de la nube
+    
+        # Añadir los mínimos del EBP si están disponibles
+        # if hasattr(self, 'ebp') and hasattr(self.ebp, 'pos_mins_centered_nm'):
+        #     for beam_idx, min_pos in enumerate(self.ebp.pos_mins_centered_nm):
+        #         plt.scatter(*min_pos, color=self.ebp.psf_colors[beam_idx], s=100)
+        # Añadir etiquetas y personalizar el gráfico
+        plt.xlabel('x (nm)', fontsize=14)
+        plt.ylabel('y (nm)', fontsize=14)
+        #plt.title('Comparison of Clouds with Ellipses and Localizations', fontsize=16)
+        plt.gca().set_aspect('equal')
+        plt.tight_layout()
+        plt.show()
+
+    # Figura 4: Elipses representando la covarianza de las nubes
+        plt.figure('Covariance Ellipses')
+        for idx in range(n_components):
+            mu_x, mu_y = means[idx]
+            sigma_x, sigma_y = sigmas[idx]
+            
+            # Calcular el módulo de sigma
+            sigma_magnitude = np.sqrt(sigma_x**2 + sigma_y**2)
+    
+            # Extraer las localizaciones de la nube
+            mask = (labels == idx)
+            x_cluster, y_cluster = x[mask], y[mask]
+    
+            # Graficar las localizaciones de la nube
+            #plt.scatter(x_cluster, y_cluster, color='powderblue', s=10, alpha=0.3)
+    
+            # Calcular la matriz de covarianza y la orientación
+            covariance = covariances[idx]
+            eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+            axis_lengths = np.sqrt(eigenvalues) * 1.52  # Ajuste del factor de escala para que incluya el 39% de la región
+            orientation = np.arctan2(eigenvectors[1, 0], eigenvectors[0, 0])  # Ángulo de rotación
+    
+            # Graficar la elipse representativa de la nube
+            ellipse = plt.matplotlib.patches.Ellipse(
+                (mu_x, mu_y),  # Centro de la elipse
+                width=axis_lengths[0],  # Eje mayor
+                height=axis_lengths[1],  # Eje menor
+                angle=np.degrees(orientation),  # Ángulo de rotación
+                edgecolor='steelblue',  # Color del borde
+                facecolor='none',  # Sin relleno
+                lw=2  # Grosor del borde
+            )
+            plt.gca().add_patch(ellipse)
+            plt.scatter(mu_x, mu_y, color='steelblue', s=20)  # Centro de la nube
+    
+            # Imprimir estadísticos de cada nube
+            print(f"Nube {idx+1}:")
+            print(f"  Media (mu_x, mu_y): ({mu_x:.2f}, {mu_y:.2f})")
+            print(f"  Desviación estándar (sigma_x, sigma_y): ({sigma_x:.2f}, {sigma_y:.2f})")
+            print(f"  Módulo de sigma: {sigma_magnitude:.2f}\n")
+            # Añadir los mínimos del EBP si están disponibles
+        if hasattr(self, 'ebp') and hasattr(self.ebp, 'pos_mins_centered_nm'):
+            for beam_idx, min_pos in enumerate(self.ebp.pos_mins_centered_nm):
+                plt.scatter(*min_pos, color=self.ebp.psf_colors[beam_idx], s=100)
+        # Añadir etiquetas y personalizar el gráfico
+        plt.xlabel('x (nm)', fontsize=14)
+        plt.ylabel('y (nm)', fontsize=14)
+        plt.title('Covariance Ellipses', fontsize=16)
+        plt.gca().set_aspect('equal')
+        plt.tight_layout()
+        plt.show()
+    

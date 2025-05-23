@@ -46,15 +46,21 @@ from origamianalysis import SMOrigamiAnalysis, ClockOrigamiAnalysis
 
 plt.close('all')
 
-date = '20250227'
+date = '20250522'
 
 # TCSPC data file
 # clocks not stabilized
-tcspc_filename = 'clock_G_drift_20250227-165924_.npy'
+tcspc_filename = 'clock_G_drift_20250227-165924_.npy' #date = '20250227'
+#tcspc_filename = "medicion_center0_post_alineacion_20250404-184314_.npy"
 # nice clock stabilized
 #tcspc_filename = 'clock_20250214-152357_.npy'
+#Bead
+#tcspc_filename = 'bead2_grid2_20250423-185049_.npy'
+# tcspc_filename = 'minflux_bead1_grid_L100_ 11por11_5s_por_punto_20250321-132443_.npy'
+tcspc_filename = 'bead1_20nm_postcentering_7_20250522-194200_.npy'
 
 # Drift data for a posteriori correction (not always used!)
+#drift_data_filename = 'xy_data20250320T18-28-38.npy'
 drift_data_filename = 'xy_data20250227T16-59-21.npy'
 
 # Absolute time for the start of the TCSPC measurement
@@ -62,7 +68,7 @@ t_start_filename = 'clock_G_drift_20250227-165924_t_start.txt'
 
 # Data for background estimation when there's no bleaching (not always used!)
 bckg_filename = 'bead_bkg_20250220-205458_.npy'
-
+bckg_filename = 'bead_20nm_bkg_20250522-191559_.npy'
 # Data for background from dark counts estimation when power is variable during measurement (not always used!)
 bckg_dark_cnts_filename = 'bckg_dark_cnts__20250224-162247_.npy'
 
@@ -74,7 +80,7 @@ t_start_filepath = data_dir / t_start_filename
 bckg_file = data_dir / bckg_filename
 bckg_file_dark_cnts_file = DIR_BASE / bckg_dark_cnts_filename
 timetrace_bin_width_s = 0.1
-target_n_ph = 1700
+target_n_ph = 2000
 
 if __name__ == "__main__":
     # Open fitted experimental PSFs

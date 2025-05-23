@@ -9,7 +9,7 @@ from configvar import (
     COLOR_LIST
 )
 
-doughnut_tail = 5
+doughnut_tail = 1
 
 class EBP():
     def __init__(self, psf_dir: Path):
@@ -42,11 +42,12 @@ class EBP():
 
         psf_fit_arr = np.array(psf_fit_list)
         pos_min_nm_arr = np.array(pos_min_nm_list)
+        print("pos_min_nm_arr: ", pos_min_nm_arr)
         pos_min_nm_centered_arr = deepcopy(pos_min_nm_arr)
         for min_idx in range(len(pos_min_nm_centered_arr)):
             pos_min_nm_centered_arr[min_idx][0] -= pos_min_nm_arr[0][0]
             pos_min_nm_centered_arr[min_idx][1] -= pos_min_nm_arr[0][1]  
-            
+        print("pos_min_nm_centered_arr", pos_min_nm_centered_arr, type(pos_min_nm_centered_arr))
         return psf_fit_arr, pos_min_nm_arr, pos_min_nm_centered_arr
     
     def plot_psf(self):

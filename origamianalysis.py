@@ -31,10 +31,7 @@ class SMOrigamiAnalysis():
         sigmas = np.sqrt(np.array([np.diag(cov) for cov in covariances]))
         print(f"Center: {means[0]}")
         print(f"Sigma: {sigmas[0]}")
-        print(f"CRB in cloud center: {self.post_proc_data.σ_CRB[
-            int(self.post_proc_data.ebp.pos_mins_nm[0][1] + means[0][1]),
-            int(self.post_proc_data.ebp.pos_mins_nm[0][0] + means[0][0])
-            ]}")
+        print(f"CRB in cloud center: {self.post_proc_data.σ_CRB[int(self.post_proc_data.ebp.pos_mins_nm[0][1] + means[0][1]), int(self.post_proc_data.ebp.pos_mins_nm[0][0] + means[0][0])]}")
         
 class ClockOrigamiAnalysis():
     def __init__(self, post_proc_data: DataPostProcessor, locs_filepath: Path, tcspc_data_dir: Path):
@@ -197,10 +194,7 @@ class ClockOrigamiAnalysis():
             print(f"Cloud number {gauss_idx}:")
             print(f"Center: {means[gauss_idx]}")
             print(f"Sigma: {sigmas[gauss_idx]}")
-            print(f"CRB in cloud center: {self.post_proc_data.σ_CRB[
-                int(self.post_proc_data.ebp.pos_mins_nm[0][1] + means[gauss_idx][1]),
-                int(self.post_proc_data.ebp.pos_mins_nm[0][0] + means[gauss_idx][0])
-                ]}")
+            print(f"CRB in cloud center: {self.post_proc_data.σ_CRB[int(self.post_proc_data.ebp.pos_mins_nm[0][1] + means[gauss_idx][1]), int(self.post_proc_data.ebp.pos_mins_nm[0][0] + means[gauss_idx][0])]}")
             
         print(f"Estimated clock origami size: {np.sqrt((means[0][0] - means[1][0])**2 + (means[0][1] - means[1][1])**2)}")
             
