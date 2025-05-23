@@ -9,7 +9,7 @@ from configvar import (
     COLOR_LIST
 )
 
-doughnut_tail = 1
+doughnut_tail = 0
 
 class EBP():
     def __init__(self, psf_dir: Path):

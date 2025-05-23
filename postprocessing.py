@@ -33,7 +33,7 @@ class DataPostProcessor():
             # correct a posteriori localizations with drift data
             self.locs = self.apost_drift_locs_corr(self.locs, self.drift_data)
         # eliminate spatial outliers from localizations
-        self.locs_nooutliers = self.locs #self.eliminate_outliers(self.locs)
+        self.locs_nooutliers = self.eliminate_outliers(self.locs)
         # now filter localizations based on photons numbers
         self.locs_filt = self.filter_locs_forph(self.locs_nooutliers)
         # compute average photon number and SBR based on filtered localizations
@@ -242,10 +242,19 @@ class DataPostProcessor():
         """
         This function plots all (filtered) localizations, encoding with time, superposed with the EBP
         """
+        x = locs[:, 1]
+        y = locs[:, 2]
+        mean_x = np.mean(x)
+        mean_y = np.mean(y)
+        std_x = np.std(x)
+        std_y = np.std(y)
+    
+        print(f"Mean position: μ = ({mean_x:.2f}, {mean_y:.2f}) nm")
+        print(f"Standard deviation: σ = ({std_x:.2f}, {std_y:.2f}) nm")
         plt.figure('Time-encoded localizations')
         for beam_idx, min_pos in enumerate(self.ebp.pos_mins_centered_nm):
             plt.scatter(*min_pos, color=self.ebp.psf_colors[beam_idx], s=100)
-        plt.scatter(locs[:, 1], locs[:, 2], c=(locs[:, 0] - locs[0, 0]), cmap='rainbow', s=20, alpha=0.05)
+        plt.scatter(locs[:, 1], locs[:, 2], c=(locs[:, 0] - locs[0, 0]), cmap='rainbow', s=20, alpha=0.1)
         color_bar = plt.colorbar(label="Time [s]", orientation="vertical")
         color_bar.solids.set(alpha=1)
         plt.xlim(self.x_plot_range)
